@@ -1,5 +1,8 @@
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use std::thread;
-use std::sync::{Arc, atomic::{AtomicBool, AtomicUsize, Ordering}};
 
 use super::run_queue::RunQueue;
 
@@ -23,7 +26,9 @@ impl Scheduler {
 
         for id in 0..num_workers {
             let local_queue = queues[id].clone();
-            let steal_targets: Vec<RunQueue> = queues.iter().enumerate()
+            let steal_targets: Vec<RunQueue> = queues
+                .iter()
+                .enumerate()
                 .filter(|(i, _)| *i != id)
                 .map(|(_, q)| q.clone())
                 .collect();
@@ -42,11 +47,7 @@ impl Scheduler {
         }
     }
 
-    fn worker_loop(
-        local_queue: RunQueue,
-        steal_targets: Vec<RunQueue>,
-        stop: Arc<AtomicBool>,
-    ) {
+    fn worker_loop(local_queue: RunQueue, steal_targets: Vec<RunQueue>, stop: Arc<AtomicBool>) {
         loop {
             if stop.load(Ordering::Relaxed) {
                 break;

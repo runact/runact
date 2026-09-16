@@ -1,8 +1,11 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
-use std::time::{Duration, Instant};
 use crate::actor::ActorId;
 use crate::runtime::MessageEnvelope;
+use std::collections::HashMap;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::{Duration, Instant};
 
 type MessageFactory = Box<dyn Fn() -> Box<dyn std::any::Any + Send> + Send + Sync>;
 
@@ -56,7 +59,9 @@ impl TimerHandle {
         message: M,
     ) -> TimerId {
         let id = TimerId::new();
-        let message = Arc::new(Mutex::new(Some(Box::new(message) as Box<dyn std::any::Any + Send>)));
+        let message = Arc::new(Mutex::new(Some(
+            Box::new(message) as Box<dyn std::any::Any + Send>
+        )));
         let mut timers = self.timers.lock().unwrap();
         timers.push(TimerEntry {
             id,
@@ -82,7 +87,9 @@ impl TimerHandle {
             id,
             actor_id,
             scheduled_at: Instant::now() + interval,
-            factory: Box::new(move || Box::new((*message).clone()) as Box<dyn std::any::Any + Send>),
+            factory: Box::new(move || {
+                Box::new((*message).clone()) as Box<dyn std::any::Any + Send>
+            }),
             interval: Some(interval),
         });
         id
@@ -97,7 +104,9 @@ impl TimerHandle {
 
 impl TimerService {
     pub(crate) fn new(
-        _senders: Arc<std::sync::RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>>,
+        _senders: Arc<
+            std::sync::RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>,
+        >,
     ) -> Self {
         let timers = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -119,7 +128,9 @@ impl TimerService {
 
     fn run(
         timers: Arc<Mutex<Vec<TimerEntry>>>,
-        senders: Arc<std::sync::RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>>,
+        senders: Arc<
+            std::sync::RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>,
+        >,
         stop: Arc<AtomicBool>,
     ) {
         loop {
@@ -128,7 +139,8 @@ impl TimerService {
             }
 
             let now = Instant::now();
-            let mut due_timers: Vec<(TimerId, ActorId, Instant, MessageFactory, Option<Duration>)> = Vec::new();
+            let mut due_timers: Vec<(TimerId, ActorId, Instant, MessageFactory, Option<Duration>)> =
+                Vec::new();
 
             {
                 let mut timers = timers.lock().unwrap();
@@ -136,7 +148,13 @@ impl TimerService {
                 while i < timers.len() {
                     if now >= timers[i].scheduled_at {
                         let timer = timers.remove(i);
-                        due_timers.push((timer.id, timer.actor_id, timer.scheduled_at, timer.factory, timer.interval));
+                        due_timers.push((
+                            timer.id,
+                            timer.actor_id,
+                            timer.scheduled_at,
+                            timer.factory,
+                            timer.interval,
+                        ));
                     } else {
                         i += 1;
                     }

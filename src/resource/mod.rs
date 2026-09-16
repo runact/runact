@@ -1,7 +1,7 @@
-mod handle;
 mod capability;
+mod handle;
 mod registry;
 
-pub use handle::ResourceHandle;
 pub use capability::Capability;
+pub use handle::ResourceHandle;
 pub use registry::ResourceRegistry;

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use runact::{Actor, ActorContext, ActorError, Runtime};
 use std::time::Instant;
 
@@ -95,7 +95,11 @@ struct Echoer;
 impl Actor for Echoer {
     type Message = (u64, std::sync::mpsc::SyncSender<u64>);
 
-    fn handle(&mut self, (n, reply): Self::Message, _ctx: &mut ActorContext) -> Result<(), ActorError> {
+    fn handle(
+        &mut self,
+        (n, reply): Self::Message,
+        _ctx: &mut ActorContext,
+    ) -> Result<(), ActorError> {
         let _ = reply.send(n);
         Ok(())
     }
@@ -113,8 +117,13 @@ fn bench_actor_to_actor_latency(c: &mut Criterion) {
         impl Actor for PingerToEchoer {
             type Message = (u64, std::sync::mpsc::SyncSender<u64>);
 
-            fn handle(&mut self, (n, reply): Self::Message, ctx: &mut ActorContext) -> Result<(), ActorError> {
-                ctx.send_to(self.echoer, (n, reply)).map_err(|e| ActorError::Handler(e.to_string()))?;
+            fn handle(
+                &mut self,
+                (n, reply): Self::Message,
+                ctx: &mut ActorContext,
+            ) -> Result<(), ActorError> {
+                ctx.send_to(self.echoer, (n, reply))
+                    .map_err(|e| ActorError::Handler(e.to_string()))?;
                 Ok(())
             }
         }
@@ -170,7 +179,7 @@ fn bench_memory_per_actor(c: &mut Criterion) {
                 std::thread::sleep(std::time::Duration::from_millis(100));
                 let after = get_rss_kb();
                 let elapsed = std::time::Duration::from_micros(
-                    after.saturating_sub(before) as u64 * 1024 / 100_000, // bytes per actor
+                    after.saturating_sub(before) * 1024 / 100_000, // bytes per actor
                 );
                 total += elapsed;
                 drop(runtime);
@@ -183,7 +192,9 @@ fn bench_memory_per_actor(c: &mut Criterion) {
 /// Get current RSS in KB (Linux only, reads /proc/self/statm)
 fn get_rss_kb() -> u64 {
     let content = std::fs::read_to_string("/proc/self/statm").unwrap_or_default();
-    let rss_pages: u64 = content.split_whitespace().nth(1)
+    let rss_pages: u64 = content
+        .split_whitespace()
+        .nth(1)
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
     let page_size = 4; // 4 KB pages

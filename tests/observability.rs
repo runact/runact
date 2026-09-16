@@ -11,11 +11,7 @@ enum PingMessage {
 impl Actor for PingActor {
     type Message = PingMessage;
 
-    fn handle(
-        &mut self,
-        msg: PingMessage,
-        ctx: &mut ActorContext,
-    ) -> Result<(), ActorError> {
+    fn handle(&mut self, msg: PingMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
         match msg {
             PingMessage::Ping => {
                 ctx.reply("pong".to_string()).ok();

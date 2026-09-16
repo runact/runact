@@ -1,5 +1,5 @@
-use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 type Task = Box<dyn FnOnce() + Send>;
 

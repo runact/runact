@@ -1,7 +1,7 @@
+use crate::compute::task::{ComputeError, ComputeResult, Task, TaskId};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use crate::compute::task::{Task, TaskId, ComputeResult, ComputeError};
 
 /// Thread pool for executing CPU-intensive tasks off the actor scheduler.
 ///
@@ -78,9 +78,8 @@ impl ComputeScheduler {
                         continue;
                     }
 
-                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        (task.job)()
-                    }));
+                    let result =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (task.job)()));
 
                     if task.cancelled.load(Ordering::Relaxed) {
                         let _ = task.result_sender.send(ComputeResult::Cancelled);
@@ -113,7 +112,10 @@ impl ComputeScheduler {
     ///
     /// Returns a [`crate::ComputeHandle`] that can be polled for the result.
     /// Panics inside the job are caught and surfaced as [`ComputeError::WorkerPanic`].
-    pub fn spawn<F, T>(&self, job: F) -> Result<crate::compute::handle::ComputeHandle<T>, ComputeError>
+    pub fn spawn<F, T>(
+        &self,
+        job: F,
+    ) -> Result<crate::compute::handle::ComputeHandle<T>, ComputeError>
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,

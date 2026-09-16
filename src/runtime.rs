@@ -1,13 +1,16 @@
-use std::collections::HashMap;
-use std::sync::{Arc, RwLock, atomic::{AtomicBool, AtomicU64, Ordering}};
-use std::time::{Duration, Instant};
-use crate::actor::{Actor, ActorId, ActorContext};
-use crate::scheduler::{Scheduler, ReductionCounter, MAX_REDUCTIONS};
-use crate::supervision::{Supervisor, RestartStrategy, ChildSpec};
-use crate::compute::{ComputeScheduler, ComputeConfig};
+use crate::actor::{Actor, ActorContext, ActorId};
+use crate::compute::{ComputeConfig, ComputeScheduler};
 use crate::error::RuntimeError;
+use crate::scheduler::{MAX_REDUCTIONS, ReductionCounter, Scheduler};
+use crate::supervision::{ChildSpec, RestartStrategy, Supervisor};
+use std::collections::HashMap;
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicBool, AtomicU64, Ordering},
+};
+use std::time::{Duration, Instant};
 
-use crate::timer::{TimerService, TimerId};
+use crate::timer::{TimerId, TimerService};
 
 /// Envelope wrapping messages sent to actors.
 pub(crate) enum MessageEnvelope {
@@ -47,7 +50,10 @@ impl RequestHandle {
     }
 
     /// Receive a reply with a timeout.
-    pub fn recv_timeout(&self, timeout: Duration) -> Result<Box<dyn std::any::Any + Send>, RuntimeError> {
+    pub fn recv_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<Box<dyn std::any::Any + Send>, RuntimeError> {
         self.receiver
             .recv_timeout(timeout)
             .map_err(|_| RuntimeError::RuntimeStopped)
@@ -89,8 +95,8 @@ impl Runtime {
     /// Create a new runtime with configuration.
     pub fn with_config(config: RuntimeConfig) -> Result<Self, RuntimeError> {
         let scheduler = Scheduler::new();
-        let compute = ComputeScheduler::new(config.compute)
-            .map_err(|_| RuntimeError::RuntimeStopped)?;
+        let compute =
+            ComputeScheduler::new(config.compute).map_err(|_| RuntimeError::RuntimeStopped)?;
 
         let senders = Arc::new(RwLock::new(HashMap::new()));
         let timers = TimerService::new(senders.clone());
@@ -161,7 +167,11 @@ impl Runtime {
                                         let _ = actor.handle(*msg, &mut ctx);
                                     }
                                 }
-                                MessageEnvelope::Request { payload, reply_sender, .. } => {
+                                MessageEnvelope::Request {
+                                    payload,
+                                    reply_sender,
+                                    ..
+                                } => {
                                     if let Ok(msg) = payload.downcast::<A::Message>() {
                                         ctx.set_reply_sender(Some(reply_sender));
                                         let _ = actor.handle(*msg, &mut ctx);
@@ -186,7 +196,11 @@ impl Runtime {
                                     let _ = actor.handle(*msg, &mut ctx);
                                 }
                             }
-                            MessageEnvelope::Request { payload, reply_sender, .. } => {
+                            MessageEnvelope::Request {
+                                payload,
+                                reply_sender,
+                                ..
+                            } => {
                                 if let Ok(msg) = payload.downcast::<A::Message>() {
                                     tracing::trace!(actor_id = %id, "handling request");
                                     ctx.set_reply_sender(Some(reply_sender));
@@ -218,8 +232,13 @@ impl Runtime {
     /// block, use [`Runtime::send_blocking`] instead.
     pub fn send<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError> {
         tracing::debug!(target_id = %target, "send");
-        let senders = self.senders.read().map_err(|_| RuntimeError::RuntimeStopped)?;
-        let sender = senders.get(&target).ok_or(RuntimeError::ActorNotFound(target))?;
+        let senders = self
+            .senders
+            .read()
+            .map_err(|_| RuntimeError::RuntimeStopped)?;
+        let sender = senders
+            .get(&target)
+            .ok_or(RuntimeError::ActorNotFound(target))?;
         sender
             .try_send(MessageEnvelope::Message(Box::new(message)))
             .map_err(|e| match e {
@@ -232,10 +251,19 @@ impl Runtime {
     ///
     /// **For use by external threads only.** Actors must never call this — it would
     /// block the scheduler worker thread. Inside actors, use [`ActorContext::send_to`].
-    pub fn send_blocking<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError> {
+    pub fn send_blocking<M: Send + 'static>(
+        &self,
+        target: ActorId,
+        message: M,
+    ) -> Result<(), RuntimeError> {
         tracing::debug!(target_id = %target, "send_blocking");
-        let senders = self.senders.read().map_err(|_| RuntimeError::RuntimeStopped)?;
-        let sender = senders.get(&target).ok_or(RuntimeError::ActorNotFound(target))?;
+        let senders = self
+            .senders
+            .read()
+            .map_err(|_| RuntimeError::RuntimeStopped)?;
+        let sender = senders
+            .get(&target)
+            .ok_or(RuntimeError::ActorNotFound(target))?;
         sender
             .send(MessageEnvelope::Message(Box::new(message)))
             .map_err(|_| RuntimeError::RuntimeStopped)
@@ -246,13 +274,22 @@ impl Runtime {
     /// The message is enqueued with a one-shot reply channel. The actor can
     /// reply using [`ActorContext::reply`]. The returned [`RequestHandle`]
     /// provides `recv()`, `try_recv()`, and `recv_timeout()` to receive the reply.
-    pub fn request<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<RequestHandle, RuntimeError> {
+    pub fn request<M: Send + 'static>(
+        &self,
+        target: ActorId,
+        message: M,
+    ) -> Result<RequestHandle, RuntimeError> {
         let request_id = self.request_counter.fetch_add(1, Ordering::Relaxed);
         tracing::debug!(target_id = %target, request_id, "request");
         let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
 
-        let senders = self.senders.read().map_err(|_| RuntimeError::RuntimeStopped)?;
-        let sender = senders.get(&target).ok_or(RuntimeError::ActorNotFound(target))?;
+        let senders = self
+            .senders
+            .read()
+            .map_err(|_| RuntimeError::RuntimeStopped)?;
+        let sender = senders
+            .get(&target)
+            .ok_or(RuntimeError::ActorNotFound(target))?;
 
         sender
             .try_send(MessageEnvelope::Request {
@@ -285,11 +322,17 @@ impl Runtime {
         match timeout {
             Some(dur) => {
                 let reply = handle.recv_timeout(dur)?;
-                reply.downcast::<R>().map(|b| *b).map_err(|_| RuntimeError::RuntimeStopped)
+                reply
+                    .downcast::<R>()
+                    .map(|b| *b)
+                    .map_err(|_| RuntimeError::RuntimeStopped)
             }
             None => {
                 let reply = handle.recv()?;
-                reply.downcast::<R>().map(|b| *b).map_err(|_| RuntimeError::RuntimeStopped)
+                reply
+                    .downcast::<R>()
+                    .map(|b| *b)
+                    .map_err(|_| RuntimeError::RuntimeStopped)
             }
         }
     }
@@ -332,13 +375,19 @@ impl Runtime {
 
     /// List all actors.
     pub fn list_actors(&self) -> Result<Vec<ActorInfo>, RuntimeError> {
-        let actors = self.actors.read().map_err(|_| RuntimeError::RuntimeStopped)?;
+        let actors = self
+            .actors
+            .read()
+            .map_err(|_| RuntimeError::RuntimeStopped)?;
         Ok(actors.values().cloned().collect())
     }
 
     /// Inspect an actor.
     pub fn inspect_actor(&self, id: ActorId) -> Result<Option<ActorInfo>, RuntimeError> {
-        let actors = self.actors.read().map_err(|_| RuntimeError::RuntimeStopped)?;
+        let actors = self
+            .actors
+            .read()
+            .map_err(|_| RuntimeError::RuntimeStopped)?;
         Ok(actors.get(&id).cloned())
     }
 
@@ -370,9 +419,11 @@ impl Runtime {
         message: M,
     ) -> TimerId {
         let message = Arc::new(message);
-        self.timers.schedule_interval(interval, target, Box::new(move || {
-            Box::new((*message).clone()) as Box<dyn std::any::Any + Send>
-        }))
+        self.timers.schedule_interval(
+            interval,
+            target,
+            Box::new(move || Box::new((*message).clone()) as Box<dyn std::any::Any + Send>),
+        )
     }
 
     /// Get runtime statistics.
@@ -401,7 +452,10 @@ impl Runtime {
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        tracing::info!(timeout_ms = self.shutdown_timeout.as_millis() as u64, "runtime shutdown");
+        tracing::info!(
+            timeout_ms = self.shutdown_timeout.as_millis() as u64,
+            "runtime shutdown"
+        );
 
         self.senders
             .write()

@@ -44,8 +44,12 @@ fn main() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
 
     // Spawn actors
-    let actor1 = runtime.spawn(CounterActor { count: 0 }).expect("Failed to spawn actor1");
-    let actor2 = runtime.spawn(CounterActor { count: 10 }).expect("Failed to spawn actor2");
+    let actor1 = runtime
+        .spawn(CounterActor { count: 0 })
+        .expect("Failed to spawn actor1");
+    let actor2 = runtime
+        .spawn(CounterActor { count: 10 })
+        .expect("Failed to spawn actor2");
 
     tracing::info!(actor1 = %actor1, actor2 = %actor2, "Actors spawned");
 

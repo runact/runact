@@ -1,5 +1,5 @@
+use runact::{Actor, ActorContext, ActorError, ComputeHandle, Runtime};
 use std::time::Duration;
-use runact::{Actor, ActorContext, ActorError, Runtime, ComputeHandle};
 
 struct ComputeActor {
     pending: Option<ComputeHandle<u64>>,
@@ -17,9 +17,9 @@ impl Actor for ComputeActor {
     fn handle(&mut self, msg: ComputeMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
         match msg {
             ComputeMessage::SubmitTask(input) => {
-                let handle = ctx.spawn_compute(move || {
-                    input * 2
-                }).expect("Failed to submit compute task");
+                let handle = ctx
+                    .spawn_compute(move || input * 2)
+                    .expect("Failed to submit compute task");
                 self.pending = Some(handle);
             }
             ComputeMessage::CheckResult => {
@@ -71,7 +71,11 @@ enum PanicComputeMessage {
 impl Actor for PanicComputeActor {
     type Message = PanicComputeMessage;
 
-    fn handle(&mut self, msg: PanicComputeMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
+    fn handle(
+        &mut self,
+        msg: PanicComputeMessage,
+        ctx: &mut ActorContext,
+    ) -> Result<(), ActorError> {
         match msg {
             PanicComputeMessage::SubmitPanicTask => {
                 let _ = ctx.spawn_compute(|| -> String {
@@ -89,13 +93,21 @@ impl Actor for PanicComputeActor {
 #[test]
 fn test_actor_submits_compute_work() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(ComputeActor { pending: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(ComputeActor { pending: None })
+        .expect("Failed to spawn");
 
-    runtime.send(actor, ComputeMessage::SubmitTask(21)).expect("Failed to send");
+    runtime
+        .send(actor, ComputeMessage::SubmitTask(21))
+        .expect("Failed to send");
     std::thread::sleep(Duration::from_millis(50));
 
-    let handle = runtime.request(actor, ComputeMessage::GetResult).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, ComputeMessage::GetResult)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let result = reply.downcast::<Option<u64>>().expect("Failed to downcast");
     assert_eq!(*result, Some(42));
 }
@@ -105,11 +117,17 @@ fn test_compute_panic_isolation() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let actor = runtime.spawn(PanicComputeActor).expect("Failed to spawn");
 
-    runtime.send(actor, PanicComputeMessage::SubmitPanicTask).expect("Failed to send");
+    runtime
+        .send(actor, PanicComputeMessage::SubmitPanicTask)
+        .expect("Failed to send");
     std::thread::sleep(Duration::from_millis(50));
 
-    let handle = runtime.request(actor, PanicComputeMessage::IsAlive).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, PanicComputeMessage::IsAlive)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let alive = reply.downcast::<bool>().expect("Failed to downcast");
     assert!(*alive);
 }
@@ -117,13 +135,21 @@ fn test_compute_panic_isolation() {
 #[test]
 fn test_compute_handle_try_recv() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(ComputeActor { pending: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(ComputeActor { pending: None })
+        .expect("Failed to spawn");
 
-    runtime.send(actor, ComputeMessage::SubmitTask(10)).expect("Failed to send");
+    runtime
+        .send(actor, ComputeMessage::SubmitTask(10))
+        .expect("Failed to send");
     std::thread::sleep(Duration::from_millis(50));
 
-    let handle = runtime.request(actor, ComputeMessage::CheckResult).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, ComputeMessage::CheckResult)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let result = reply.downcast::<Option<u64>>().expect("Failed to downcast");
     assert_eq!(*result, Some(20));
 }
@@ -132,32 +158,49 @@ fn test_compute_handle_try_recv() {
 fn test_external_compute_submission() {
     let runtime = Runtime::new().expect("Failed to create runtime");
 
-    let handle = runtime.compute().spawn(|| {
-        100 + 200
-    }).expect("Failed to submit compute task");
+    let handle = runtime
+        .compute()
+        .spawn(|| 100 + 200)
+        .expect("Failed to submit compute task");
 
-    let result = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let result = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     assert_eq!(result, 300);
 }
 
 #[test]
 fn test_multiple_compute_tasks() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(ComputeActor { pending: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(ComputeActor { pending: None })
+        .expect("Failed to spawn");
 
-    runtime.send(actor, ComputeMessage::SubmitTask(5)).expect("Failed to send");
+    runtime
+        .send(actor, ComputeMessage::SubmitTask(5))
+        .expect("Failed to send");
     std::thread::sleep(Duration::from_millis(50));
 
-    let handle = runtime.request(actor, ComputeMessage::GetResult).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, ComputeMessage::GetResult)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let result = reply.downcast::<Option<u64>>().expect("Failed to downcast");
     assert_eq!(*result, Some(10));
 
-    runtime.send(actor, ComputeMessage::SubmitTask(25)).expect("Failed to send");
+    runtime
+        .send(actor, ComputeMessage::SubmitTask(25))
+        .expect("Failed to send");
     std::thread::sleep(Duration::from_millis(50));
 
-    let handle = runtime.request(actor, ComputeMessage::GetResult).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, ComputeMessage::GetResult)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let result = reply.downcast::<Option<u64>>().expect("Failed to downcast");
     assert_eq!(*result, Some(50));
 }
@@ -166,10 +209,13 @@ fn test_multiple_compute_tasks() {
 fn test_compute_cancellation() {
     let runtime = Runtime::new().expect("create runtime");
 
-    let handle = runtime.compute().spawn(|| {
-        std::thread::sleep(Duration::from_secs(10));
-        42u64
-    }).expect("submit task");
+    let handle = runtime
+        .compute()
+        .spawn(|| {
+            std::thread::sleep(Duration::from_secs(10));
+            42u64
+        })
+        .expect("submit task");
 
     handle.cancel();
     assert!(handle.is_cancelled());
@@ -185,13 +231,18 @@ fn test_compute_cancel_before_execution() {
     let (ready_tx, ready_rx) = crossbeam_channel::bounded::<()>(1);
     let (proceed_tx, proceed_rx) = crossbeam_channel::bounded::<()>(1);
 
-    let handle = runtime.compute().spawn(move || {
-        ready_tx.send(()).ok();
-        proceed_rx.recv().ok();
-        42u64
-    }).expect("submit task");
+    let handle = runtime
+        .compute()
+        .spawn(move || {
+            ready_tx.send(()).ok();
+            proceed_rx.recv().ok();
+            42u64
+        })
+        .expect("submit task");
 
-    ready_rx.recv_timeout(Duration::from_secs(1)).expect("task should start");
+    ready_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("task should start");
 
     handle.cancel();
     proceed_tx.send(()).ok();

@@ -1,5 +1,5 @@
-use std::time::{Duration, Instant};
 use crate::actor::ActorId;
+use std::time::{Duration, Instant};
 
 /// Timer ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -41,7 +41,11 @@ pub struct Timer {
 
 impl Timer {
     /// Create a one-shot timer.
-    pub fn after(duration: Duration, actor_id: ActorId, message: impl Into<Box<dyn std::any::Any + Send>>) -> Self {
+    pub fn after(
+        duration: Duration,
+        actor_id: ActorId,
+        message: impl Into<Box<dyn std::any::Any + Send>>,
+    ) -> Self {
         Self {
             id: TimerId::new(),
             actor_id,
@@ -52,7 +56,11 @@ impl Timer {
     }
 
     /// Create a periodic timer.
-    pub fn every(interval: Duration, actor_id: ActorId, message: impl Into<Box<dyn std::any::Any + Send>>) -> Self {
+    pub fn every(
+        interval: Duration,
+        actor_id: ActorId,
+        message: impl Into<Box<dyn std::any::Any + Send>>,
+    ) -> Self {
         Self {
             id: TimerId::new(),
             actor_id,

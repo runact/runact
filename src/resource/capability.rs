@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use super::handle::ResourceHandle;
 use crate::actor::ActorId;
+use std::sync::Arc;
 
 /// Typed, owner-tracked wrapper around a resource handle.
 #[must_use]

@@ -1,18 +1,12 @@
+use crate::actor::{Actor, ActorContext, ActorError, ActorId};
+use crate::supervision::strategy::RestartStrategy;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use crate::actor::{Actor, ActorId, ActorContext, ActorError};
-use crate::supervision::strategy::RestartStrategy;
 
 #[allow(dead_code)]
 pub enum SupervisorMessage {
-    ChildStarted {
-        child_id: ActorId,
-        name: String,
-    },
-    ChildCrashed {
-        child_id: ActorId,
-        reason: String,
-    },
+    ChildStarted { child_id: ActorId, name: String },
+    ChildCrashed { child_id: ActorId, reason: String },
     GetStatus,
 }
 
@@ -72,11 +66,7 @@ impl SupervisorActor {
 impl Actor for SupervisorActor {
     type Message = SupervisorMessage;
 
-    fn handle(
-        &mut self,
-        msg: SupervisorMessage,
-        ctx: &mut ActorContext,
-    ) -> Result<(), ActorError> {
+    fn handle(&mut self, msg: SupervisorMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
         match msg {
             SupervisorMessage::ChildStarted { child_id, name } => {
                 self.children.insert(
@@ -91,7 +81,11 @@ impl Actor for SupervisorActor {
             }
             SupervisorMessage::ChildCrashed { child_id, reason } => {
                 let max_restarts = self.max_restarts();
-                let new_restart_count = self.children.get(&child_id).map(|e| e.restart_count + 1).unwrap_or(0);
+                let new_restart_count = self
+                    .children
+                    .get(&child_id)
+                    .map(|e| e.restart_count + 1)
+                    .unwrap_or(0);
                 let delay = self.backoff_delay(new_restart_count);
 
                 if let Some(entry) = self.children.get_mut(&child_id) {
@@ -199,22 +193,34 @@ mod tests {
     fn test_supervisor_tracks_children() {
         let mut runtime = Runtime::new().expect("Failed to create runtime");
         let supervisor = SupervisorActor::new(RestartStrategy::default());
-        let supervisor_id = runtime.spawn(supervisor).expect("Failed to spawn supervisor");
-        let child = runtime.spawn(TestCounter { count: 0 }).expect("Failed to spawn child");
+        let supervisor_id = runtime
+            .spawn(supervisor)
+            .expect("Failed to spawn supervisor");
+        let child = runtime
+            .spawn(TestCounter { count: 0 })
+            .expect("Failed to spawn child");
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildStarted {
-                child_id: child,
-                name: "test_counter".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildStarted {
+                    child_id: child,
+                    name: "test_counter".to_string(),
+                },
+            )
+            .expect("Failed to send");
 
         std::thread::sleep(Duration::from_millis(20));
 
-        let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).expect("Failed to request");
-        let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
-        let statuses = reply.downcast::<Vec<ChildStatus>>().expect("Failed to downcast");
+        let handle = runtime
+            .request(supervisor_id, SupervisorMessage::GetStatus)
+            .expect("Failed to request");
+        let reply = handle
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Failed to receive");
+        let statuses = reply
+            .downcast::<Vec<ChildStatus>>()
+            .expect("Failed to downcast");
 
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].name, "test_counter");
@@ -231,32 +237,46 @@ mod tests {
             base_backoff: Duration::from_millis(0),
         };
         let supervisor = SupervisorActor::new(strategy);
-        let supervisor_id = runtime.spawn(supervisor).expect("Failed to spawn supervisor");
-        let child = runtime.spawn(TestCounter { count: 0 }).expect("Failed to spawn child");
+        let supervisor_id = runtime
+            .spawn(supervisor)
+            .expect("Failed to spawn supervisor");
+        let child = runtime
+            .spawn(TestCounter { count: 0 })
+            .expect("Failed to spawn child");
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildStarted {
-                child_id: child,
-                name: "crasher".to_string(),
-            },
-        ).expect("Failed to send");
-
-        std::thread::sleep(Duration::from_millis(20));
-
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildCrashed {
-                child_id: child,
-                reason: "test crash".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildStarted {
+                    child_id: child,
+                    name: "crasher".to_string(),
+                },
+            )
+            .expect("Failed to send");
 
         std::thread::sleep(Duration::from_millis(20));
 
-        let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).expect("Failed to request");
-        let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
-        let statuses = reply.downcast::<Vec<ChildStatus>>().expect("Failed to downcast");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildCrashed {
+                    child_id: child,
+                    reason: "test crash".to_string(),
+                },
+            )
+            .expect("Failed to send");
+
+        std::thread::sleep(Duration::from_millis(20));
+
+        let handle = runtime
+            .request(supervisor_id, SupervisorMessage::GetStatus)
+            .expect("Failed to request");
+        let reply = handle
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Failed to receive");
+        let statuses = reply
+            .downcast::<Vec<ChildStatus>>()
+            .expect("Failed to downcast");
 
         assert_eq!(statuses.len(), 1);
         assert_eq!(statuses[0].restart_count, 1);
@@ -272,33 +292,47 @@ mod tests {
             base_backoff: Duration::from_millis(0),
         };
         let supervisor = SupervisorActor::new(strategy);
-        let supervisor_id = runtime.spawn(supervisor).expect("Failed to spawn supervisor");
-        let child = runtime.spawn(TestCounter { count: 0 }).expect("Failed to spawn child");
+        let supervisor_id = runtime
+            .spawn(supervisor)
+            .expect("Failed to spawn supervisor");
+        let child = runtime
+            .spawn(TestCounter { count: 0 })
+            .expect("Failed to spawn child");
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildStarted {
-                child_id: child,
-                name: "persistent_crasher".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildStarted {
+                    child_id: child,
+                    name: "persistent_crasher".to_string(),
+                },
+            )
+            .expect("Failed to send");
 
         std::thread::sleep(Duration::from_millis(20));
 
         for i in 0..3 {
-            runtime.send(
-                supervisor_id,
-                SupervisorMessage::ChildCrashed {
-                    child_id: child,
-                    reason: format!("crash {}", i),
-                },
-            ).expect("Failed to send");
+            runtime
+                .send(
+                    supervisor_id,
+                    SupervisorMessage::ChildCrashed {
+                        child_id: child,
+                        reason: format!("crash {}", i),
+                    },
+                )
+                .expect("Failed to send");
             std::thread::sleep(Duration::from_millis(20));
         }
 
-        let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).expect("Failed to request");
-        let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
-        let statuses = reply.downcast::<Vec<ChildStatus>>().expect("Failed to downcast");
+        let handle = runtime
+            .request(supervisor_id, SupervisorMessage::GetStatus)
+            .expect("Failed to request");
+        let reply = handle
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Failed to receive");
+        let statuses = reply
+            .downcast::<Vec<ChildStatus>>()
+            .expect("Failed to downcast");
 
         assert_eq!(statuses[0].restart_count, 3);
         assert!(!statuses[0].alive);
@@ -313,52 +347,72 @@ mod tests {
             base_backoff: Duration::from_millis(0),
         };
         let supervisor = SupervisorActor::new(strategy);
-        let supervisor_id = runtime.spawn(supervisor).expect("Failed to spawn supervisor");
-        let child1 = runtime.spawn(TestCounter { count: 0 }).expect("Failed to spawn child1");
-        let child2 = runtime.spawn(TestCounter { count: 0 }).expect("Failed to spawn child2");
+        let supervisor_id = runtime
+            .spawn(supervisor)
+            .expect("Failed to spawn supervisor");
+        let child1 = runtime
+            .spawn(TestCounter { count: 0 })
+            .expect("Failed to spawn child1");
+        let child2 = runtime
+            .spawn(TestCounter { count: 0 })
+            .expect("Failed to spawn child2");
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildStarted {
-                child_id: child1,
-                name: "child1".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildStarted {
+                    child_id: child1,
+                    name: "child1".to_string(),
+                },
+            )
+            .expect("Failed to send");
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildStarted {
-                child_id: child2,
-                name: "child2".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildStarted {
+                    child_id: child2,
+                    name: "child2".to_string(),
+                },
+            )
+            .expect("Failed to send");
 
         std::thread::sleep(Duration::from_millis(20));
 
         for _ in 0..3 {
-            runtime.send(
-                supervisor_id,
-                SupervisorMessage::ChildCrashed {
-                    child_id: child1,
-                    reason: "child1 crash".to_string(),
-                },
-            ).expect("Failed to send");
+            runtime
+                .send(
+                    supervisor_id,
+                    SupervisorMessage::ChildCrashed {
+                        child_id: child1,
+                        reason: "child1 crash".to_string(),
+                    },
+                )
+                .expect("Failed to send");
             std::thread::sleep(Duration::from_millis(20));
         }
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildCrashed {
-                child_id: child2,
-                reason: "child2 crash".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildCrashed {
+                    child_id: child2,
+                    reason: "child2 crash".to_string(),
+                },
+            )
+            .expect("Failed to send");
 
         std::thread::sleep(Duration::from_millis(20));
 
-        let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).expect("Failed to request");
-        let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
-        let statuses = reply.downcast::<Vec<ChildStatus>>().expect("Failed to downcast");
+        let handle = runtime
+            .request(supervisor_id, SupervisorMessage::GetStatus)
+            .expect("Failed to request");
+        let reply = handle
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Failed to receive");
+        let statuses = reply
+            .downcast::<Vec<ChildStatus>>()
+            .expect("Failed to downcast");
 
         assert_eq!(statuses.len(), 2);
 
@@ -381,60 +435,96 @@ mod tests {
             base_backoff: Duration::from_millis(200),
         };
         let supervisor = SupervisorActor::new(strategy);
-        let supervisor_id = runtime.spawn(supervisor).expect("Failed to spawn supervisor");
-        let child = runtime.spawn(TestCounter { count: 0 }).expect("Failed to spawn child");
+        let supervisor_id = runtime
+            .spawn(supervisor)
+            .expect("Failed to spawn supervisor");
+        let child = runtime
+            .spawn(TestCounter { count: 0 })
+            .expect("Failed to spawn child");
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildStarted {
-                child_id: child,
-                name: "backoff_child".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildStarted {
+                    child_id: child,
+                    name: "backoff_child".to_string(),
+                },
+            )
+            .expect("Failed to send");
         std::thread::sleep(Duration::from_millis(20));
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildCrashed {
-                child_id: child,
-                reason: "first crash".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildCrashed {
+                    child_id: child,
+                    reason: "first crash".to_string(),
+                },
+            )
+            .expect("Failed to send");
         std::thread::sleep(Duration::from_millis(20));
 
-        let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).expect("Failed to request");
-        let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
-        let statuses = reply.downcast::<Vec<ChildStatus>>().expect("Failed to downcast");
-        assert!(statuses[0].alive, "first crash should restart immediately (no prior restart)");
+        let handle = runtime
+            .request(supervisor_id, SupervisorMessage::GetStatus)
+            .expect("Failed to request");
+        let reply = handle
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Failed to receive");
+        let statuses = reply
+            .downcast::<Vec<ChildStatus>>()
+            .expect("Failed to downcast");
+        assert!(
+            statuses[0].alive,
+            "first crash should restart immediately (no prior restart)"
+        );
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildCrashed {
-                child_id: child,
-                reason: "second crash right after".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildCrashed {
+                    child_id: child,
+                    reason: "second crash right after".to_string(),
+                },
+            )
+            .expect("Failed to send");
         std::thread::sleep(Duration::from_millis(20));
 
-        let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).expect("Failed to request");
-        let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
-        let statuses = reply.downcast::<Vec<ChildStatus>>().expect("Failed to downcast");
-        assert!(!statuses[0].alive, "second crash should be deferred by backoff");
+        let handle = runtime
+            .request(supervisor_id, SupervisorMessage::GetStatus)
+            .expect("Failed to request");
+        let reply = handle
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Failed to receive");
+        let statuses = reply
+            .downcast::<Vec<ChildStatus>>()
+            .expect("Failed to downcast");
+        assert!(
+            !statuses[0].alive,
+            "second crash should be deferred by backoff"
+        );
 
         std::thread::sleep(Duration::from_millis(1000));
 
-        runtime.send(
-            supervisor_id,
-            SupervisorMessage::ChildCrashed {
-                child_id: child,
-                reason: "third crash after backoff".to_string(),
-            },
-        ).expect("Failed to send");
+        runtime
+            .send(
+                supervisor_id,
+                SupervisorMessage::ChildCrashed {
+                    child_id: child,
+                    reason: "third crash after backoff".to_string(),
+                },
+            )
+            .expect("Failed to send");
         std::thread::sleep(Duration::from_millis(20));
 
-        let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).expect("Failed to request");
-        let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
-        let statuses = reply.downcast::<Vec<ChildStatus>>().expect("Failed to downcast");
+        let handle = runtime
+            .request(supervisor_id, SupervisorMessage::GetStatus)
+            .expect("Failed to request");
+        let reply = handle
+            .recv_timeout(Duration::from_secs(1))
+            .expect("Failed to receive");
+        let statuses = reply
+            .downcast::<Vec<ChildStatus>>()
+            .expect("Failed to downcast");
         assert!(statuses[0].alive, "should restart after backoff elapsed");
     }
 }

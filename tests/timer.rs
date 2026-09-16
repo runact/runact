@@ -1,6 +1,6 @@
+use runact::{Actor, ActorContext, ActorError, Runtime, TimerId};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use runact::{Actor, ActorContext, ActorError, Runtime, TimerId};
 
 struct TimerActor {
     received: Arc<Mutex<Vec<String>>>,
@@ -33,7 +33,11 @@ impl Actor for TimerActor {
 fn test_one_shot_timer() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let actor = runtime.spawn(TimerActor { received: received.clone() }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(TimerActor {
+            received: received.clone(),
+        })
+        .expect("Failed to spawn");
 
     let _ = runtime.schedule_timer(
         Duration::from_millis(50),
@@ -43,8 +47,12 @@ fn test_one_shot_timer() {
 
     std::thread::sleep(Duration::from_millis(100));
 
-    let handle = runtime.request(actor, TimerMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, TimerMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count = reply.downcast::<usize>().expect("Failed to downcast");
     assert_eq!(*count, 1);
 
@@ -56,7 +64,11 @@ fn test_one_shot_timer() {
 fn test_periodic_timer() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let actor = runtime.spawn(TimerActor { received: received.clone() }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(TimerActor {
+            received: received.clone(),
+        })
+        .expect("Failed to spawn");
 
     let _ = runtime.schedule_interval(
         Duration::from_millis(30),
@@ -66,8 +78,12 @@ fn test_periodic_timer() {
 
     std::thread::sleep(Duration::from_millis(100));
 
-    let handle = runtime.request(actor, TimerMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, TimerMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count = reply.downcast::<usize>().expect("Failed to downcast");
     assert!(*count >= 2);
 }
@@ -76,7 +92,11 @@ fn test_periodic_timer() {
 fn test_timer_cancellation() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let actor = runtime.spawn(TimerActor { received: received.clone() }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(TimerActor {
+            received: received.clone(),
+        })
+        .expect("Failed to spawn");
 
     let timer_id = runtime.schedule_timer(
         Duration::from_millis(50),
@@ -88,8 +108,12 @@ fn test_timer_cancellation() {
 
     std::thread::sleep(Duration::from_millis(100));
 
-    let handle = runtime.request(actor, TimerMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, TimerMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count = reply.downcast::<usize>().expect("Failed to downcast");
     assert_eq!(*count, 0);
 }
@@ -98,7 +122,11 @@ fn test_timer_cancellation() {
 fn test_multiple_timers() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let actor = runtime.spawn(TimerActor { received: received.clone() }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(TimerActor {
+            received: received.clone(),
+        })
+        .expect("Failed to spawn");
 
     let _ = runtime.schedule_timer(
         Duration::from_millis(30),
@@ -114,8 +142,12 @@ fn test_multiple_timers() {
 
     std::thread::sleep(Duration::from_millis(100));
 
-    let handle = runtime.request(actor, TimerMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, TimerMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count = reply.downcast::<usize>().expect("Failed to downcast");
     assert_eq!(*count, 2);
 
@@ -141,10 +173,12 @@ impl Actor for SelfTimerActor {
     fn handle(&mut self, msg: SelfTimerMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
         match msg {
             SelfTimerMessage::Start => {
-                let _ = ctx.schedule_timer(
-                    Duration::from_millis(30),
-                    SelfTimerMessage::Ping("self-timer".to_string()),
-                ).expect("Failed to schedule timer");
+                let _ = ctx
+                    .schedule_timer(
+                        Duration::from_millis(30),
+                        SelfTimerMessage::Ping("self-timer".to_string()),
+                    )
+                    .expect("Failed to schedule timer");
             }
             SelfTimerMessage::Ping(text) => {
                 self.received.lock().unwrap().push(text);
@@ -162,14 +196,24 @@ impl Actor for SelfTimerActor {
 fn test_actor_schedules_timer_from_handle() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    let actor = runtime.spawn(SelfTimerActor { received: received.clone() }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(SelfTimerActor {
+            received: received.clone(),
+        })
+        .expect("Failed to spawn");
 
-    runtime.send(actor, SelfTimerMessage::Start).expect("Failed to send");
+    runtime
+        .send(actor, SelfTimerMessage::Start)
+        .expect("Failed to send");
 
     std::thread::sleep(Duration::from_millis(100));
 
-    let handle = runtime.request(actor, SelfTimerMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, SelfTimerMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count = reply.downcast::<usize>().expect("Failed to downcast");
     assert_eq!(*count, 1);
 
@@ -192,13 +236,19 @@ enum SelfIntervalMessage {
 impl Actor for SelfIntervalActor {
     type Message = SelfIntervalMessage;
 
-    fn handle(&mut self, msg: SelfIntervalMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
+    fn handle(
+        &mut self,
+        msg: SelfIntervalMessage,
+        ctx: &mut ActorContext,
+    ) -> Result<(), ActorError> {
         match msg {
             SelfIntervalMessage::StartInterval => {
-                let id = ctx.schedule_interval(
-                    Duration::from_millis(30),
-                    SelfIntervalMessage::Ping("interval-tick".to_string()),
-                ).expect("Failed to schedule interval");
+                let id = ctx
+                    .schedule_interval(
+                        Duration::from_millis(30),
+                        SelfIntervalMessage::Ping("interval-tick".to_string()),
+                    )
+                    .expect("Failed to schedule interval");
                 *self.timer_id.lock().unwrap() = Some(id);
             }
             SelfIntervalMessage::Ping(text) => {
@@ -218,14 +268,25 @@ fn test_actor_schedules_interval_from_handle() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let timer_id = Arc::new(Mutex::new(None));
-    let actor = runtime.spawn(SelfIntervalActor { received: received.clone(), timer_id: timer_id.clone() }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(SelfIntervalActor {
+            received: received.clone(),
+            timer_id: timer_id.clone(),
+        })
+        .expect("Failed to spawn");
 
-    runtime.send(actor, SelfIntervalMessage::StartInterval).expect("Failed to send");
+    runtime
+        .send(actor, SelfIntervalMessage::StartInterval)
+        .expect("Failed to send");
 
     std::thread::sleep(Duration::from_millis(100));
 
-    let handle = runtime.request(actor, SelfIntervalMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, SelfIntervalMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count = reply.downcast::<usize>().expect("Failed to downcast");
     assert!(*count >= 2);
 
@@ -239,9 +300,16 @@ fn test_actor_cancels_interval_from_handle() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
     let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let timer_id = Arc::new(Mutex::new(None));
-    let actor = runtime.spawn(SelfIntervalActor { received: received.clone(), timer_id: timer_id.clone() }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(SelfIntervalActor {
+            received: received.clone(),
+            timer_id: timer_id.clone(),
+        })
+        .expect("Failed to spawn");
 
-    runtime.send(actor, SelfIntervalMessage::StartInterval).expect("Failed to send");
+    runtime
+        .send(actor, SelfIntervalMessage::StartInterval)
+        .expect("Failed to send");
     std::thread::sleep(Duration::from_millis(75));
 
     let id = timer_id.lock().unwrap().take().expect("Timer ID not set");
@@ -249,15 +317,26 @@ fn test_actor_cancels_interval_from_handle() {
 
     std::thread::sleep(Duration::from_millis(50));
 
-    let handle = runtime.request(actor, SelfIntervalMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, SelfIntervalMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count_before = *reply.downcast::<usize>().expect("Failed to downcast");
 
     std::thread::sleep(Duration::from_millis(200));
 
-    let handle = runtime.request(actor, SelfIntervalMessage::GetCount).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, SelfIntervalMessage::GetCount)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let count_after = *reply.downcast::<usize>().expect("Failed to downcast");
 
-    assert_eq!(count_before, count_after, "Timer should have stopped after cancellation");
+    assert_eq!(
+        count_before, count_after,
+        "Timer should have stopped after cancellation"
+    );
 }

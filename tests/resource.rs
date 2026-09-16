@@ -1,6 +1,8 @@
+use runact::{
+    Actor, ActorContext, ActorError, Capability, ResourceHandle, ResourceRegistry, Runtime,
+};
 use std::any::Any;
 use std::time::Duration;
-use runact::{Actor, ActorContext, ActorError, Runtime, ResourceHandle, Capability, ResourceRegistry};
 
 #[derive(Debug)]
 struct FileHandle {
@@ -52,7 +54,9 @@ impl Actor for FileReaderActor {
 #[test]
 fn test_capability_creation() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(FileReaderActor { file_cap: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(FileReaderActor { file_cap: None })
+        .expect("Failed to spawn");
 
     let file = FileHandle {
         path: "/tmp/test.txt".to_string(),
@@ -68,7 +72,9 @@ fn test_capability_creation() {
 #[test]
 fn test_capability_clone() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(FileReaderActor { file_cap: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(FileReaderActor { file_cap: None })
+        .expect("Failed to spawn");
 
     let file = FileHandle {
         path: "/tmp/test.txt".to_string(),
@@ -84,7 +90,9 @@ fn test_capability_clone() {
 #[test]
 fn test_actor_receives_capability() {
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(FileReaderActor { file_cap: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(FileReaderActor { file_cap: None })
+        .expect("Failed to spawn");
 
     let file = FileHandle {
         path: "/tmp/test.txt".to_string(),
@@ -92,11 +100,17 @@ fn test_actor_receives_capability() {
     };
     let cap = Capability::new(actor, file);
 
-    runtime.send(actor, FileReaderMessage::SetCapability(cap)).expect("Failed to send");
+    runtime
+        .send(actor, FileReaderMessage::SetCapability(cap))
+        .expect("Failed to send");
     std::thread::sleep(Duration::from_millis(50));
 
-    let handle = runtime.request(actor, FileReaderMessage::ReadFile).expect("Failed to request");
-    let reply = handle.recv_timeout(Duration::from_secs(1)).expect("Failed to receive");
+    let handle = runtime
+        .request(actor, FileReaderMessage::ReadFile)
+        .expect("Failed to request");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive");
     let path = reply.downcast::<String>().expect("Failed to downcast");
     assert_eq!(*path, "/tmp/test.txt");
 }
@@ -105,7 +119,9 @@ fn test_actor_receives_capability() {
 fn test_resource_registry() {
     let registry = ResourceRegistry::new();
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(FileReaderActor { file_cap: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(FileReaderActor { file_cap: None })
+        .expect("Failed to spawn");
 
     let file = FileHandle {
         path: "/tmp/test.txt".to_string(),
@@ -123,7 +139,9 @@ fn test_resource_registry() {
 fn test_resource_registry_remove() {
     let registry = ResourceRegistry::new();
     let mut runtime = Runtime::new().expect("Failed to create runtime");
-    let actor = runtime.spawn(FileReaderActor { file_cap: None }).expect("Failed to spawn");
+    let actor = runtime
+        .spawn(FileReaderActor { file_cap: None })
+        .expect("Failed to spawn");
 
     let file = FileHandle {
         path: "/tmp/test.txt".to_string(),

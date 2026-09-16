@@ -3,4 +3,4 @@
 mod queue;
 
 #[allow(unused_imports)]
-pub(crate) use queue::{Mailbox, MailboxConfig, BackpressurePolicy};
+pub(crate) use queue::{BackpressurePolicy, Mailbox, MailboxConfig};

@@ -34,22 +34,22 @@
 //! - **Resources** — type-safe capability-based resource management.
 
 pub mod actor;
-pub mod timer;
-pub mod resource;
 pub mod error;
+pub mod resource;
+pub mod timer;
 
+mod compute;
+mod mailbox;
 mod runtime;
 mod scheduler;
-mod mailbox;
-mod compute;
 
-pub use actor::{Actor, ActorId, ActorContext, ActorError};
-pub use scheduler::Scheduler;
-pub use supervision::{Supervisor, RestartStrategy, ChildSpec, RestartPolicy};
-pub use compute::{ComputeScheduler, ComputeConfig, ComputeHandle, ComputeError};
-pub use timer::{Timer, TimerConfig, TimerId};
+pub use actor::{Actor, ActorContext, ActorError, ActorId};
+pub use compute::{ComputeConfig, ComputeError, ComputeHandle, ComputeScheduler};
 pub use error::RuntimeError;
-pub use runtime::{Runtime, RuntimeConfig, RuntimeStats, RequestHandle, ActorInfo};
-pub use resource::{ResourceHandle, Capability, ResourceRegistry};
+pub use resource::{Capability, ResourceHandle, ResourceRegistry};
+pub use runtime::{ActorInfo, RequestHandle, Runtime, RuntimeConfig, RuntimeStats};
+pub use scheduler::Scheduler;
+pub use supervision::{ChildSpec, RestartPolicy, RestartStrategy, Supervisor};
+pub use timer::{Timer, TimerConfig, TimerId};
 
 mod supervision;

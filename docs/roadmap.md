@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the development phases for Runact and Paper. Each phase builds on the previous one.
+This document outlines the development phases for Runact. Each phase builds on the previous one. Runact is the runtime; Paper is a separate editor project built on top of it.
 
 ---
 
@@ -10,8 +10,8 @@ This document outlines the development phases for Runact and Paper. Each phase b
 
 | Component | Status | Tests |
 |-----------|--------|-------|
-| **Runact** (runtime) | Phases 0–5 complete, v0.5–v0.9 complete | 48/48 passing |
-| **Paper** (editor) | Scaffold with extension architecture | Compiles |
+| **Runact** (runtime) | Phases 0–5 complete, v0.5–v0.9 complete, v1.0.0 released | 48/48 passing |
+| **Paper** (editor) | Separate project — see `paper/docs/roadmap.md` | Compiles |
 
 ---
 
@@ -87,30 +87,6 @@ This document outlines the development phases for Runact and Paper. Each phase b
 
 ---
 
-## Phase 6 — Editor Runtime (in progress)
-
-### Deliverables
-
-- [x] `paper/` — Separate project, extension architecture
-- [x] `src/core/` — Extension trait, EditorRuntime, BufferActor
-- [x] `src/extensions/` — InputExtension, RenderExtension
-- [ ] Working cursor rendering
-- [ ] File open/save
-- [ ] Undo/redo
-
----
-
-## Phase 7 — Programmability (in progress)
-
-### Deliverables
-
-- [x] Extension trait with init/shutdown lifecycle
-- [ ] Extension loading from config
-- [ ] Command system
-- [ ] Event hooks
-
----
-
 ## Roadmap to v1
 
 ### v0.5 — API Hardening ✅
@@ -177,53 +153,12 @@ This document outlines the development phases for Runact and Paper. Each phase b
 
 ---
 
-## Paper v1
-
-### v0.5 — Working Editor
-
-| Task | Priority |
-|------|----------|
-| Fix cursor rendering | high |
-| Buffer: line wrapping, scroll | high |
-| Input: complete vim keybinding set (w, b, e, gg, G) | medium |
-| File: open/save via `:e` and `:w` commands | high |
-| Status bar: file name, line count, modified indicator | medium |
-
-### v0.6 — Usability
-
-| Task | Priority |
-|------|----------|
-| Visual mode (selection) | medium |
-| Undo/redo | high |
-| Search (`/`) | medium |
-| Clipboard integration | medium |
-| Multiple buffers/windows | medium |
-
-### v0.7 — Extension System
-
-| Task | Priority |
-|------|----------|
-| `Extension` trait: `init()`, `shutdown()`, `on_key()`, `on_render()` | high |
-| Extension loading from config | medium |
-| Built-in extensions: syntax highlighting, line numbers | medium |
-| Example: custom status bar extension | low |
-
-### v1.0 — Release
-
-| Task | Priority |
-|------|----------|
-| `cargo publish` to crates.io | high |
-| README with screenshots | high |
-| `paper --help`, `paper <file>` CLI | high |
-
----
-
 ## Timeline
 
 ```
 Now ─────── v0.5 ──── v0.6 ──── v0.7 ──── v0.8 ──── v0.9 ──── v1.0
             │         │         │         │         │         │
-            │         │         │         │         │         └─ Runact + Paper v1.0
+            │         │         │         │         │         └─ Runact v1.0
             │         │         │         │         └─ Benchmarks
             │         │         │         └─ Documentation
             │         │         └─ Robustness (backpressure, restart)
@@ -251,6 +186,8 @@ Now ─────── v0.5 ──── v0.6 ──── v0.7 ──── 
 - Responsive UI
 - Real-world functionality
 - Extensions work
+
+> Editor milestones are tracked in `paper/docs/roadmap.md`.
 
 ---
 

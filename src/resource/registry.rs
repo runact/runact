@@ -1,9 +1,9 @@
-use std::any::Any;
-use std::collections::HashMap;
-use std::sync::RwLock;
-use std::any::TypeId;
 use super::capability::Capability;
 use super::handle::ResourceHandle;
+use std::any::Any;
+use std::any::TypeId;
+use std::collections::HashMap;
+use std::sync::RwLock;
 
 /// Type-safe registry for resource capabilities.
 #[must_use]
@@ -30,7 +30,8 @@ impl ResourceRegistry {
     /// Retrieve a capability by handle type. Returns `None` if not registered.
     pub fn get<H: ResourceHandle + 'static>(&self) -> Option<Capability<H>> {
         let resources = self.resources.read().unwrap();
-        resources.get(&TypeId::of::<H>())
+        resources
+            .get(&TypeId::of::<H>())
             .and_then(|any| any.downcast_ref::<Capability<H>>())
             .cloned()
     }
@@ -38,11 +39,10 @@ impl ResourceRegistry {
     /// Remove and return a capability by handle type.
     pub fn remove<H: ResourceHandle + 'static>(&self) -> Option<Capability<H>> {
         let mut resources = self.resources.write().unwrap();
-        resources.remove(&TypeId::of::<H>())
-            .and_then(|any| {
-                let boxed = any.downcast::<Capability<H>>().ok()?;
-                Some(*boxed)
-            })
+        resources.remove(&TypeId::of::<H>()).and_then(|any| {
+            let boxed = any.downcast::<Capability<H>>().ok()?;
+            Some(*boxed)
+        })
     }
 
     /// Returns `true` if a capability of the given handle type is registered.

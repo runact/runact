@@ -1,7 +1,7 @@
+use crate::compute::task::{ComputeError, ComputeResult};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use crate::compute::task::{ComputeResult, ComputeError};
 
 /// Handle to a submitted compute task. Used to retrieve the result or
 /// cancel the task.
@@ -50,7 +50,9 @@ impl<T> ComputeHandle<T> {
             ComputeResult::Err(e) => Err(e),
             ComputeResult::Panic(msg) => Err(ComputeError::WorkerPanic(msg)),
             ComputeResult::Timeout => Err(ComputeError::WorkerPanic("Task timed out".to_string())),
-            ComputeResult::Cancelled => Err(ComputeError::WorkerPanic("Task cancelled".to_string())),
+            ComputeResult::Cancelled => {
+                Err(ComputeError::WorkerPanic("Task cancelled".to_string()))
+            }
         }
     }
 

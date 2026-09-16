@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use crate::actor::ActorId;
-use crate::supervision::strategy::RestartStrategy;
 use crate::supervision::child::ChildSpec;
+use crate::supervision::strategy::RestartStrategy;
+use std::collections::HashMap;
 
 /// Supervisor — manages child actor lifecycle.
 pub struct Supervisor {

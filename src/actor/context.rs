@@ -1,10 +1,10 @@
-use std::collections::HashMap;
-use std::sync::{Arc, atomic::AtomicBool, RwLock};
 use crate::actor::id::ActorId;
+use crate::compute::{ComputeError, ComputeHandle, Task, TaskId};
 use crate::error::RuntimeError;
 use crate::runtime::MessageEnvelope;
 use crate::timer::{TimerHandle, TimerId};
-use crate::compute::{ComputeHandle, ComputeError, Task, TaskId};
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock, atomic::AtomicBool};
 
 type SenderMap = Arc<RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>>;
 
@@ -43,10 +43,7 @@ impl ActorContext {
         self.reply_sender = reply_sender;
     }
 
-    pub(crate) fn set_compute_sender(
-        &mut self,
-        compute_sender: crossbeam_channel::Sender<Task>,
-    ) {
+    pub(crate) fn set_compute_sender(&mut self, compute_sender: crossbeam_channel::Sender<Task>) {
         self.compute_sender = Some(compute_sender);
     }
 
@@ -73,9 +70,16 @@ impl ActorContext {
         target: ActorId,
         message: M,
     ) -> Result<(), crate::error::RuntimeError> {
-        let senders = self.senders.as_ref().ok_or(crate::error::RuntimeError::RuntimeStopped)?;
-        let senders = senders.read().map_err(|_| crate::error::RuntimeError::RuntimeStopped)?;
-        let sender = senders.get(&target).ok_or(crate::error::RuntimeError::ActorNotFound(target))?;
+        let senders = self
+            .senders
+            .as_ref()
+            .ok_or(crate::error::RuntimeError::RuntimeStopped)?;
+        let senders = senders
+            .read()
+            .map_err(|_| crate::error::RuntimeError::RuntimeStopped)?;
+        let sender = senders
+            .get(&target)
+            .ok_or(crate::error::RuntimeError::ActorNotFound(target))?;
         sender
             .send(MessageEnvelope::Message(Box::new(message)))
             .map_err(|_| crate::error::RuntimeError::RuntimeStopped)
@@ -107,15 +111,15 @@ impl ActorContext {
     /// Returns a `ComputeHandle` that can be used to receive the result.
     /// The actor should store this handle and poll it later (e.g., on the next message).
     /// This is non-blocking — the task runs on a compute worker thread.
-    pub fn spawn_compute<F, T>(
-        &self,
-        job: F,
-    ) -> Result<ComputeHandle<T>, ComputeError>
+    pub fn spawn_compute<F, T>(&self, job: F) -> Result<ComputeHandle<T>, ComputeError>
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static,
     {
-        let sender = self.compute_sender.as_ref().ok_or(ComputeError::SchedulerShutdown)?;
+        let sender = self
+            .compute_sender
+            .as_ref()
+            .ok_or(ComputeError::SchedulerShutdown)?;
         let (result_sender, result_receiver) = crossbeam_channel::bounded(1);
         let cancelled = Arc::new(AtomicBool::new(false));
 
@@ -143,7 +147,10 @@ impl ActorContext {
         duration: std::time::Duration,
         message: M,
     ) -> Result<TimerId, RuntimeError> {
-        let handle = self.timer_handle.as_ref().ok_or(RuntimeError::RuntimeStopped)?;
+        let handle = self
+            .timer_handle
+            .as_ref()
+            .ok_or(RuntimeError::RuntimeStopped)?;
         Ok(handle.schedule_timer(duration, self.actor_id, message))
     }
 
@@ -156,7 +163,10 @@ impl ActorContext {
         interval: std::time::Duration,
         message: M,
     ) -> Result<TimerId, RuntimeError> {
-        let handle = self.timer_handle.as_ref().ok_or(RuntimeError::RuntimeStopped)?;
+        let handle = self
+            .timer_handle
+            .as_ref()
+            .ok_or(RuntimeError::RuntimeStopped)?;
         Ok(handle.schedule_interval(interval, self.actor_id, message))
     }
 

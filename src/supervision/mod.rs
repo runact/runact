@@ -1,10 +1,10 @@
 //! Supervision — BEAM-inspired supervision tree.
 
-mod supervisor;
-mod strategy;
 mod child;
+mod strategy;
+mod supervisor;
 mod supervisor_actor;
 
-pub use supervisor::Supervisor;
-pub use strategy::RestartStrategy;
 pub use child::{ChildSpec, RestartPolicy};
+pub use strategy::RestartStrategy;
+pub use supervisor::Supervisor;

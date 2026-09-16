@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex, Condvar};
 use crate::actor::ActorId;
 use crate::error::RuntimeError;
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex};
 
 /// Backpressure policy when mailbox is full.
 #[allow(dead_code)]
@@ -41,7 +41,10 @@ impl<T> Mailbox<T> {
     /// Create a new mailbox.
     pub fn new(config: MailboxConfig) -> Self {
         Self {
-            inner: Arc::new((Mutex::new(VecDeque::with_capacity(config.capacity)), Condvar::new())),
+            inner: Arc::new((
+                Mutex::new(VecDeque::with_capacity(config.capacity)),
+                Condvar::new(),
+            )),
             config,
         }
     }
