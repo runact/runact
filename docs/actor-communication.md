@@ -17,14 +17,24 @@ Actor A                    Actor B
 
 No actor should directly mutate another actor's state.
 
-Rust's ownership system enforces this wherever possible.
+Rust's ownership system enforces this wherever possible. Shared state (`Arc<Mutex<T>>`) remains possible when genuinely required, but it is not the fundamental programming model.
+
+See also: [Actors](#621-actor-state-ownership)
+
+---
 
 ## 2. Message Sending is Asynchronous
 
 The fundamental operation is:
 
 ```rust
-actor.send(message);
+runtime.send(actor_id, message)?;
+```
+
+Or from inside an actor:
+
+```rust
+ctx.send_to(target, message)?;
 ```
 
 It means:
@@ -38,10 +48,12 @@ It does **not** mean:
 Therefore:
 
 ```rust
-a.send(Message::Something);
+runtime.send(actor_id, message).unwrap();
 ```
 
-should normally return immediately.
+should return immediately (unless the mailbox is full, in which case it returns `RuntimeError::MailboxFull`).
+
+---
 
 ## 3. `send()` Must Not Wait for the Actor
 
@@ -50,16 +62,18 @@ This is an important distinction.
 **Bad:**
 
 ```rust
-a.send(msg); // blocks until A processes msg
+runtime.send(id, msg).unwrap(); // would block until A processes msg
 ```
 
 **Correct:**
 
 ```rust
-a.send(msg); // enqueue and return
+runtime.send(id, msg).unwrap(); // enqueue and return
 ```
 
 The sender should not depend on the recipient's execution speed.
+
+---
 
 ## 4. Request/Reply is Still Asynchronous
 
@@ -70,7 +84,7 @@ Don't turn that into synchronous actor blocking.
 Instead:
 
 ```rust
-let handle = actor.request(GetUser { id });
+let handle = runtime.request(actor_id, message)?;
 ```
 
 Conceptually:
@@ -87,28 +101,31 @@ B
 A
 ```
 
-The request returns a handle, not the result itself.
-
-For example:
+The request returns a `RequestHandle`, not the result itself.
 
 ```rust
-let result = actor.request(message);
-result.on_reply(|reply| {
-    // handle reply
-});
+let handle = runtime.request(actor_id, message)?;
+let reply = handle.recv_timeout(Duration::from_secs(1))?;
 ```
 
-Or, if Runact eventually has an actor-native async mechanism:
+Or `try_recv` for non-blocking polling:
 
 ```rust
-let result = request.await;
+match handle.try_recv() {
+    Ok(reply) => { /* handle reply */ }
+    Err(_) => { /* still pending or failed */ }
+}
 ```
 
 But the crucial question is:
 
 > What happens to the actor while it waits?
 
-It must remain schedulable.
+Inside an actor, the reply is received asynchronously — the actor handler returns and the result is delivered as a subsequent message. The actor must not call `recv()` (which blocks) inside its handler; it should submit work and poll later via `try_recv`.
+
+For external threads (outside actors), `recv()` is acceptable since those threads are not scheduler workers.
+
+---
 
 ## 5. An Actor Must Never Block Its Scheduler Worker
 
@@ -116,7 +133,7 @@ This is probably the most important runtime rule.
 
 **Bad:**
 
-```
+```text
 Worker 1
    │
    └── Actor A
@@ -126,7 +143,7 @@ Worker 1
 
 Worker 1 should not become:
 
-```
+```text
 Worker 1
    │
    └── BLOCKED
@@ -134,12 +151,12 @@ Worker 1
 
 **Correct:**
 
-```
+```text
 Actor A
    │
    └── waiting for reply
           │
-          ↓
+          ▼
       scheduler
           │
           ├── Actor B
@@ -147,13 +164,17 @@ Actor A
           └── Actor D
 ```
 
-A waiting actor becomes Waiting/Suspended, while the worker executes something else.
+A waiting actor should return control to the scheduler (via its handler returning), while the worker executes something else.
+
+In Runact's current implementation, actors do not have an explicit "waiting" state for request/reply — instead, actors submit compute tasks and poll with `try_recv`, or use timers for timeouts. The handler always returns quickly.
+
+---
 
 ## 6. Waiting is a State, Not Blocking
 
 Think of an actor state machine:
 
-```
+```text
               ┌───────────┐
               │   Ready   │
               └─────┬─────┘
@@ -166,28 +187,28 @@ Think of an actor state machine:
           ┌─────────┼─────────┐
           │         │         │
           ▼         ▼         ▼
-       Ready      Waiting   Sleeping
+       Ready     Waiting   Sleeping
                     │
-                    │ reply
+                    │ reply/timer/compute result
                     ▼
                   Ready
 ```
 
 The actor can wait for:
 
-- reply
-- timer
-- I/O
-- resource
-- external event
+- compute result (poll with `try_recv`)
+- timer (timer message arrives later)
+- external event (via messages)
 
 without blocking an OS thread.
+
+---
 
 ## 7. Actor-to-Actor Calls Should Not Hold Locks
 
 **Avoid:**
 
-```
+```text
 A
 │
 ├── lock state
@@ -206,58 +227,62 @@ This gives us:
 - No locks across actor boundaries.
 - Locks can still exist internally when genuinely necessary, but they should not be the normal communication mechanism.
 
+---
+
 ## 8. Request/Reply Must Have Correlation IDs
 
-A request should carry an ID.
+A request carries an ID.
 
 **Request:**
 
-```
+```text
 Request
-├── request_id
-├── sender
-└── payload
+├── request id
+├── payload
+└── reply channel
 ```
 
 **Reply:**
 
-```
+```text
 Reply
-├── request_id
+├── request id
 ├── sender
 └── result
 ```
 
-**Example:**
+In Runact, `Runtime::request` assigns a unique `request_id` (via an `AtomicU64` counter) and creates a bounded oneshot channel for the reply:
 
+```rust
+let request_id = self.request_counter.fetch_add(1, Ordering::Relaxed);
+let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
 ```
-A ── request #42 ──> B
-A ── request #43 ──> B
 
-B ── reply #43 ──> A
-B ── reply #42 ──> A
-```
+The reply is sent back via `ctx.reply(message)`, which writes to the reply channel. The `RequestHandle` wraps the receiver.
 
 The runtime can match replies correctly.
 
 This becomes important when an actor has many outstanding requests.
 
+---
+
 ## 9. Timeouts are Optional, Not Implicit
 
-A request may specify:
+A request may specify a timeout:
 
 ```rust
-request.timeout(Duration::from_secs(5));
+let handle = runtime.request(actor_id, message)?;
+let reply = handle.recv_timeout(Duration::from_secs(5))?;
 ```
 
 If the timeout expires:
 
-```
+```text
 Request
    │
    ├── Reply → success
    │
-   └── Timeout → failure
+   └── Timeout → returns RecvTimeoutError::Timeout
 ```
 
 But Runact should not automatically impose arbitrary timeouts.
@@ -266,13 +291,26 @@ A local computation might legitimately take 30 seconds.
 
 Timeouts are application-level policy.
 
+For compute tasks, `ComputeHandle::recv_timeout` provides the same pattern:
+
+```rust
+let handle = ctx.spawn_compute(|| expensive_work())?;
+match handle.recv_timeout(Duration::from_secs(5)) {
+    Ok(value) => { /* use value */ }
+    Err(ComputeError::WorkerPanic("Timeout")) => { /* timed out */ }
+    Err(e) => { /* other error */ }
+}
+```
+
+---
+
 ## 10. Cancellation Should Be Cooperative
 
 Never try to forcibly kill arbitrary Rust code.
 
 **Bad model:**
 
-```
+```text
 cancel()
    ↓
 kill thread
@@ -280,7 +318,7 @@ kill thread
 
 **Instead:**
 
-```
+```text
 cancel()
    ↓
 CancellationToken
@@ -290,27 +328,40 @@ computation checks token
 stops safely
 ```
 
-For example:
+For compute tasks:
 
 ```rust
-if ctx.cancelled() {
-    return Err(Error::Cancelled);
-}
+let handle = ctx.spawn_compute(|| {
+    // long-running work
+})?;
+
+// Later, cancel it:
+handle.cancel();
 ```
 
+The compute worker checks the cancellation flag before and after execution. If set before, the task is skipped (`ComputeResult::Cancelled`). If set after, the result is discarded.
+
 This matters particularly for the Runact compute pool.
+
+---
 
 ## 11. Fire-and-Forget is a First-Class Pattern
 
 Sometimes no response is required.
 
 ```rust
-logger.send(Log(message));
+runtime.send(actor_id, LogMessage::Info("hello".to_string()))?;
 ```
 
 The sender doesn't care about a reply.
 
 This should be extremely cheap.
+
+```rust
+ctx.send_to(target, Message::Notify)?;
+```
+
+---
 
 ## 12. Request/Reply is Not the Default
 
@@ -333,7 +384,7 @@ when possible.
 
 **Example:**
 
-```
+```text
 FileActor
    │
    └── FileChanged
@@ -345,13 +396,15 @@ FileActor
 
 rather than having everyone synchronously query the file actor.
 
-This encourages loose coupling.
+This encourages loose coupling. Fire-and-forget message passing is the primary communication mechanism.
+
+---
 
 ## 13. Don't Make Every Operation Request/Reply
 
 **Bad architecture:**
 
-```
+```text
 UI
  ↓
 Buffer.call()
@@ -369,7 +422,7 @@ You end up recreating RPC inside one process.
 
 **Better:**
 
-```
+```text
              ┌── BufferActor
              │
 UIActor ──────┼── FileActor
@@ -383,13 +436,15 @@ UIActor ──────┼── FileActor
 
 Communication remains message-oriented.
 
+---
+
 ## 14. Mailbox Backpressure Must Be Explicit
 
 Asynchronous doesn't mean unlimited queues.
 
 Consider:
 
-```
+```text
 Producer
    │
    │ 1,000,000 messages/sec
@@ -403,84 +458,102 @@ Actor
 
 Eventually memory explodes.
 
-Therefore Runact needs mailbox policies.
+Therefore Runact uses bounded mailboxes. The default capacity is 1000 messages, configurable via `RuntimeConfig.mailbox_capacity`.
 
-**Potential policies:**
+**Policy:**
 
-- Bounded
-- Drop
-- Reject
-- Block external producer
-- Coalesce
-- Priority
+| Strategy | Behavior |
+|----------|----------|
+| `Reject` | Return `RuntimeError::MailboxFull` to sender |
+| `Block` | Sender waits until space available (`send_blocking`) |
 
-But blocking an actor because its mailbox is full should not be the default.
+For `Runtime::send`:
 
-For v0.1:
+> Use bounded mailboxes and return an explicit error when capacity is exhausted.
 
-> Use bounded mailboxes where appropriate and return an explicit error when capacity is exhausted.
+```rust
+runtime.send(actor_id, message)?;
+// Returns Err(RuntimeError::MailboxFull(actor_id)) if full
+```
+
+For external threads that can afford to block:
+
+```rust
+runtime.send_blocking(actor_id, message)?;
+// Blocks until the message is accepted
+```
+
+---
 
 ## 15. External Threads Are Different
 
 There is an important distinction between:
 
-- Actor → Actor
-- External OS thread → Actor
+- Actor → Actor (via `ctx.send_to`)
+- External OS thread → Actor (via `runtime.send` / `runtime.send_blocking`)
+- External OS thread → Actor with reply (via `runtime.request`)
 
 A normal OS thread can potentially block.
 
 For example:
 
 ```rust
-let result = actor.request(msg).wait();
+// From an external thread — acceptable
+let handle = runtime.request(actor_id, msg)?;
+let reply: String = handle.recv()?;
 ```
 
-could be acceptable from an external thread.
-
-But:
+But inside an actor handler:
 
 ```rust
-actor_context.call(other_actor, msg).wait();
+// Inside an actor handler — must NOT block the scheduler worker
+// Instead, submit compute and poll with try_recv
+let handle = ctx.spawn_compute(|| heavy_work())?;
+// Return from handler, poll later
 ```
 
-inside an actor should be discouraged or prohibited.
-
-So Runact can have two APIs:
+So Runact has two APIs:
 
 ```rust
-// Actor context
-request(actor, message)
+// Actor context — non-blocking
+ctx.send_to(target, msg)?;
 
-// External/blocking context
-request_blocking(actor, message)
+// External/blocking context — may block
+runtime.send_blocking(actor_id, msg)?;
+runtime.request(actor_id, msg)?;
+let handle = runtime.request(actor_id, msg)?;
+handle.recv_timeout(Duration::from_secs(5))?;
 ```
 
 This distinction makes the semantics clear.
+
+---
 
 ## 16. Actor Code Should Be Mostly Deterministic
 
 An actor should conceptually behave like:
 
-```
+```text
 State + Message → New State + Effects
 ```
 
-For example:
-
 ```rust
-fn handle(
-    state: &mut State,
-    message: Message,
-) -> Effects {
-    // ...
+fn handle(&mut self, msg: Message, ctx: &mut ActorContext) -> Result<(), ActorError> {
+    // State transition
+    self.count += 1;
+    // Effect
+    ctx.reply(self.count)?;
+    Ok(())
 }
 ```
 
 The actor owns the state transition.
 
-External effects should go through runtime services.
+External effects should go through runtime services (compute pool, timers, message sending).
 
 This makes actors easier to test.
+
+---
 
 ## 17. Effects Should Be Explicit
 
@@ -488,7 +561,7 @@ An actor shouldn't directly do everything.
 
 **Good:**
 
-```
+```text
 BufferActor
    │
    ├── state mutation
@@ -498,19 +571,21 @@ BufferActor
 
 **Bad:**
 
-```
+```text
 BufferActor
    │
    └── directly manipulates filesystem
 ```
 
-This produces clearer architecture.
+This produces clearer architecture. Actors communicate intent through messages; side effects are handled by appropriate actors or the compute pool.
+
+---
 
 ## 18. Long Computations Are Not Actor Work
 
 Suppose an actor receives:
 
-```
+```text
 CompileProject
 ```
 
@@ -518,7 +593,7 @@ It shouldn't perform a 30-second compilation inside its actor execution.
 
 Instead:
 
-```
+```text
 CompileActor
      │
      └── submit
@@ -532,13 +607,15 @@ CompileActor
      CompileActor
 ```
 
-This preserves responsiveness.
+This preserves responsiveness. Use `ctx.spawn_compute` to offload CPU-intensive work.
+
+---
 
 ## 19. Failure is a Message/Runtime Event
 
 An actor failing should not mean:
 
-```
+```text
 panic
  ↓
 Runact dies
@@ -546,29 +623,45 @@ Runact dies
 
 **Instead:**
 
+```text
+Compute Task
+  │
+  │ panic
+  ▼
+Runtime catches failure (catch_unwind in compute worker)
+  │
+  └── ComputeResult::Panic(msg)
+       │
+       ▼
+      Actor (receives via ComputeHandle)
 ```
+
+Compute tasks are isolated — panics are caught at the worker boundary and surfaced as `ComputeError::WorkerPanic(msg)`. The actor and worker thread survive.
+
+For actor handler panics (not currently caught in v1.0.0 but planned), the model is:
+
+```text
 Actor
   │
-  X
-  │
+  │ panic
   ▼
-Runtime
+Runtime catches failure
   │
-  ▼
-Supervisor
-  │
-  ├── restart
-  ├── stop
-  └── escalate
+  ├── record failure
+  ├── notify supervisor
+  ├── clean actor resources
+  └── apply restart strategy
 ```
 
 This is one of Runact's major BEAM-inspired properties.
 
+---
+
 ## 20. Actor Lifecycle Must Be Explicit
 
-An actor should have a lifecycle such as:
+An actor has a lifecycle such as:
 
-```
+```text
 Created
    ↓
 Starting
@@ -586,7 +679,7 @@ Stopped
 
 **Failure:**
 
-```
+```text
 Running
    ↓
 Failed
@@ -596,13 +689,17 @@ Supervisor
 Restart / Stop / Escalate
 ```
 
-This becomes important for editor services.
+This becomes important for editor services and supervised processes.
+
+The runtime tracks `ActorInfo` with `mailbox_depth` and logs lifecycle events via `tracing`.
+
+---
 
 ## 21. No Actor Should Depend on Another Actor Staying Alive Forever
 
 If:
 
-```
+```text
 A → B
 ```
 
@@ -615,11 +712,27 @@ A must be able to handle:
 
 This encourages resilient systems.
 
+When sending to a non-existent actor:
+
+```rust
+match runtime.send(ActorId::new(999), message) {
+    Err(RuntimeError::ActorNotFound(id)) => {
+        // Target actor does not exist
+    }
+    Err(RuntimeError::MailboxFull(id)) => {
+        // Target mailbox is full
+    }
+    Ok(()) => { /* sent */ }
+}
+```
+
+---
+
 ## 22. Backpressure Belongs at Boundaries
 
 Suppose:
 
-```
+```text
 AIActor
    ↓
 10,000 requests
@@ -631,38 +744,42 @@ The runtime should prevent unlimited work from accumulating.
 
 Therefore:
 
-```
+```text
 Actor
  ↓
-bounded queue
+bounded mailbox (default: 1000)
  ↓
 Compute
 ```
 
 If overloaded:
 
-- Rejected
-- Busy
-- Deferred
-- Dropped
+- Rejected (`MailboxFull` error)
+- Busy (actor can't keep up)
+- Deferred (poll with `try_recv`)
+- Dropped (not currently supported — rejected by default)
 
-depending on the API.
+The `send` API returns an error rather than silently dropping messages.
+
+---
 
 ## 23. The Runtime Must Distinguish Three Kinds of Waiting
 
 This is especially important for Runact.
 
 | Kind | Behavior |
-|---|---|
-| **Actor waiting** | Waiting for reply, timer, I/O — must not block a worker |
+|------|----------|
+| **Actor waiting** | Waiting for reply, timer, compute result — must not block a worker |
 | **Compute waiting** | A CPU worker may legitimately be occupied doing CPU work |
 | **External blocking** | An external OS thread may block if the API explicitly allows it |
 
 So:
 
-- Actor waiting → suspend actor
+- Actor waiting → return from handler, poll later with `try_recv`
 - CPU computation → occupy compute worker
-- External blocking → allowed at boundary
+- External blocking → allowed at boundary (`recv_timeout`, `send_blocking`)
+
+---
 
 ## 24. The Fundamental Runact Invariant
 
@@ -674,7 +791,7 @@ And alongside it:
 
 Then:
 
-> Synchronous request/reply is a convenience abstraction implemented through asynchronous messaging, suspension, correlation, and optional timeout — not through blocking the scheduler.
+> Synchronous request/reply is a convenience abstraction implemented through asynchronous messaging, a bounded reply channel, correlation ID, and optional timeout — not through blocking the scheduler.
 
 That is the principle that differentiates Runact from a simple thread/channel library.
 
@@ -684,7 +801,7 @@ That is the principle that differentiates Runact from a simple thread/channel li
 
 ### Runact Actor Communication
 
-```
+```text
                      RUNACT ACTOR
                           │
              ┌────────────┼────────────┐
@@ -698,20 +815,20 @@ That is the principle that differentiates Runact from a simple thread/channel li
                        Reply
                           │
                           ▼
-                    Resume Actor
+                    Resume Actor (poll result)
 ```
 
 ### Scheduler State Machine
 
-```
+```text
 READY
   ↓
 RUNNING
   ↓
-WAITING ───────────────┐
-  │                    │
-  │ reply/timer/I/O     │
-  └────────────────────┘
+WAITING ————————┐
+  │             │
+  │ reply/timer/compute result
+  └———————→
            ↓
          READY
 ```

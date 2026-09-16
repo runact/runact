@@ -1,4 +1,4 @@
-# Resources
+# Resources & Capabilities
 
 ## Overview
 
@@ -9,6 +9,7 @@ Resources provide type-safe, capability-based access to external state. A `Capab
 ```rust
 use runact::{ResourceHandle, Capability, ResourceRegistry};
 use std::fmt;
+use std::any::Any;
 
 #[derive(Debug)]
 struct DatabaseConnection {
@@ -20,7 +21,7 @@ impl ResourceHandle for DatabaseConnection {
         "DatabaseConnection"
     }
 
-    fn as_any(&self) -> &dyn std::any::Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 }
@@ -30,11 +31,11 @@ impl ResourceHandle for DatabaseConnection {
 
 ```rust
 let cap = Capability::new(
-    owner_actor_id,
+    actor_id,
     DatabaseConnection { url: "postgres://localhost/mydb".to_string() },
 );
 
-assert_eq!(cap.owner(), owner_actor_id);
+assert_eq!(cap.owner(), actor_id);
 assert_eq!(cap.handle().resource_type(), "DatabaseConnection");
 ```
 
@@ -44,7 +45,7 @@ assert_eq!(cap.handle().resource_type(), "DatabaseConnection");
 let registry = ResourceRegistry::new();
 registry.register(cap);
 
-// Later, retrieve by type:
+// Retrieve by type:
 let retrieved: Option<Capability<DatabaseConnection>> = registry.get();
 assert!(retrieved.is_some());
 
@@ -52,7 +53,7 @@ assert!(retrieved.is_some());
 assert!(registry.has::<DatabaseConnection>());
 
 // Remove:
-let removed = registry.remove::<DatabaseConnection>();
+let removed: Option<Capability<DatabaseConnection>> = registry.remove();
 assert!(removed.is_some());
 assert!(!registry.has::<DatabaseConnection>());
 ```
@@ -66,7 +67,7 @@ let cap = Capability::new(actor_id, my_resource);
 assert_eq!(cap.owner(), actor_id);
 ```
 
-This enables ownership-based access control — actors can only use capabilities they own or have been granted.
+This enables ownership-based access control — actors can only use capabilities they own or have been explicitly granted (by receiving a `Capability` message from another actor).
 
 ## Shared Handles
 
@@ -91,9 +92,22 @@ pub trait ResourceHandle: Any + Send + Sync + fmt::Debug + 'static {
 }
 ```
 
+## Sending Capabilities Between Actors
+
+Capabilities can be sent as messages to other actors:
+
+```rust
+// Grant a capability to another actor
+ctx.send_to(target, GrantFileAccess { capability: cap })?;
+```
+
+The receiving actor can then use the capability in its own context.
+
 ## Best Practices
 
 1. **One capability per resource type** — The registry uses `TypeId` for lookup
 2. **Keep handles small** — They're stored in a type-erased registry
 3. **Use capabilities for access control** — Only actors with the capability can use the resource
 4. **Clone to share** — `Arc` makes sharing cheap
+5. **Design capabilities around least privilege** — Grant only what the actor needs
+6. **Log capability usage** — Use `tracing` to record capability-related operations

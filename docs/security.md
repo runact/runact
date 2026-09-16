@@ -14,428 +14,153 @@ Security in Runact is based on capabilities. Every operation that could affect t
 
 ## Capability System
 
+### ResourceHandle
+
+A resource handle is a type that can be stored in the runtime's resource registry. Any type that implements `ResourceHandle` can be turned into a `Capability`.
+
+```rust
+pub trait ResourceHandle: Any + Send + Sync + fmt::Debug + 'static {
+    fn resource_type(&self) -> &str;
+    fn as_any(&self) -> &dyn Any;
+}
+```
+
 ### Capability
 
-A capability is a permission unit.
+A capability is a typed, owner-tracked wrapper around a resource handle.
 
 ```rust
-pub enum Capability {
-    // Process
-    ProcessExecute,
-    ProcessSpawn,
-
-    // System
-    SystemRead,
-    SystemWrite,
-
-    // Network
-    NetworkConnect { hosts: Vec<String> },
-
-    // Extension
-    ExtensionRegister,
-    ExtensionExecute,
-
-    // Timer
-    TimerCreate,
+pub struct Capability<H: ResourceHandle> {
+    owner: ActorId,
+    handle: Arc<H>,
 }
 ```
 
-### Capability Set
-
-A collection of capabilities granted to a principal.
+Example implementation:
 
 ```rust
-pub struct Capabilities {
-    grants: Vec<Capability>,
+#[derive(Debug)]
+struct DatabaseConnection {
+    url: String,
 }
 
-impl Capabilities {
-    pub fn new() -> Self {
-        Self { grants: Vec::new() }
+impl ResourceHandle for DatabaseConnection {
+    fn resource_type(&self) -> &str {
+        "DatabaseConnection"
     }
 
-    pub fn grant(&mut self, capability: Capability) {
-        self.grants.push(capability);
-    }
-
-    pub fn has(&self, capability: &Capability) -> bool {
-        self.grants.iter().any(|g| g.matches(capability))
-    }
-
-    pub fn require(&self, capability: &Capability) -> Result<(), CapabilityError> {
-        if self.has(capability) {
-            Ok(())
-        } else {
-            Err(CapabilityError::Missing {
-                required: capability.clone(),
-            })
-        }
-    }
-}
-```
-
-### Capability Matching
-
-```rust
-impl Capability {
-    fn matches(&self, required: &Capability) -> bool {
-        match (self, required) {
-            (Capability::ProcessExecute, Capability::ProcessExecute) => true,
-            (Capability::ProcessSpawn, Capability::ProcessSpawn) => true,
-            (Capability::SystemRead, Capability::SystemRead) => true,
-            (Capability::SystemWrite, Capability::SystemWrite) => true,
-            (Capability::NetworkConnect { hosts }, Capability::NetworkConnect { hosts: required }) => {
-                hosts.iter().any(|h| required.iter().any(|r| r == h))
-            }
-            (Capability::ExtensionRegister, Capability::ExtensionRegister) => true,
-            (Capability::ExtensionExecute, Capability::ExtensionExecute) => true,
-            (Capability::TimerCreate, Capability::TimerCreate) => true,
-            _ => false,
-        }
-    }
-}
-```
-
-## Principal Types
-
-### Process
-
-Every process has capabilities.
-
-```rust
-pub struct Process {
-    id: ProcessId,
-    capabilities: Capabilities,
-    // ...
-}
-```
-
-### Agent
-
-Agents have explicitly granted capabilities.
-
-```rust
-pub struct Agent {
-    id: AgentId,
-    capabilities: Capabilities,
-    // ...
-}
-```
-
-### Extension
-
-Extensions declare required capabilities.
-
-```rust
-pub struct Extension {
-    id: ExtensionId,
-    manifest: Manifest,
-    granted_capabilities: Capabilities,
-}
-
-pub struct Manifest {
-    name: String,
-    version: ProtocolVersion,
-    required_capabilities: Vec<Capability>,
-}
-```
-
-## Policy
-
-### Policy Rules
-
-```rust
-pub struct Policy {
-    rules: Vec<PolicyRule>,
-}
-
-pub enum PolicyRule {
-    AlwaysAllow { capability: Capability },
-    AlwaysDeny { capability: Capability },
-    AllowIf { capability: Capability, condition: PolicyCondition },
-    RequireApproval { capability: Capability, approver: ApprovalSource },
-}
-
-pub enum PolicyCondition {
-    TimeRange { start: Time, end: Time },
-    PathPattern { pattern: String },
-    ProcessType { process_type: String },
-    AgentId { agent_id: AgentId },
-}
-```
-
-### Policy Evaluation
-
-```rust
-impl Policy {
-    pub fn evaluate(&self, capability: &Capability, context: &PolicyContext) -> PolicyDecision {
-        for rule in &self.rules {
-            match rule {
-                PolicyRule::AlwaysAllow { capability: c } if c.matches(capability) => {
-                    return PolicyDecision::Allow;
-                }
-                PolicyRule::AlwaysDeny { capability: c } if c.matches(capability) => {
-                    return PolicyDecision::Deny;
-                }
-                PolicyRule::RequireApproval { capability: c, .. } if c.matches(capability) => {
-                    return PolicyDecision::RequireApproval;
-                }
-                _ => {}
-            }
-        }
-
-        PolicyDecision::Deny  // Default: deny
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
-pub enum PolicyDecision {
-    Allow,
-    Deny,
-    RequireApproval,
-}
+// Create a capability:
+let cap = Capability::new(actor_id, DatabaseConnection {
+    url: "postgres://localhost/mydb".to_string(),
+});
+
+// Access the handle:
+cap.handle().resource_type();  // "DatabaseConnection"
+cap.owner();  // ActorId of the owning actor
 ```
 
-## Approval System
+### Capability Properties
 
-### Approval Request
+- **Type-safe** — `Capability<DatabaseConnection>` is distinct from `Capability<FileHandle>`
+- **Owner-tracked** — Each capability knows which actor owns it
+- **Shared via Arc** — Cloning is cheap (`Arc::clone`)
+- **Send + Sync** — Safe to share between threads
+
+### ResourceRegistry
+
+A type-safe registry for storing capabilities by their handle type:
 
 ```rust
-pub struct ApprovalRequest {
-    pub request_id: MessageId,
-    pub principal_id: PrincipalId,
-    pub capability: Capability,
-    pub context: ApprovalContext,
-    pub timestamp: Timestamp,
-}
-
-pub struct ApprovalContext {
-    pub description: String,
-    pub risk_level: RiskLevel,
-    pub affected_resources: Vec<ResourceId>,
-    pub preview: Option<String>,
-}
-
-pub enum RiskLevel {
-    Low,
-    Medium,
-    High,
-    Critical,
+pub struct ResourceRegistry {
+    resources: RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>,
 }
 ```
-
-### Approval Response
 
 ```rust
-pub struct ApprovalResponse {
-    pub request_id: MessageId,
-    pub decision: ApprovalDecision,
-    pub approver: ApproverId,
-    pub timestamp: Timestamp,
-    pub reason: Option<String>,
-}
+let registry = ResourceRegistry::new();
 
-pub enum ApprovalDecision {
-    Approve,
-    Deny,
-    ApproveWithConditions { conditions: Vec<String> },
-}
+// Register a capability:
+registry.register(cap);
+
+// Retrieve by type:
+let retrieved: Option<Capability<DatabaseConnection>> = registry.get();
+
+// Check existence:
+assert!(registry.has::<DatabaseConnection>());
+
+// Remove:
+let removed: Option<Capability<DatabaseConnection>> = registry.remove();
 ```
 
-### Approval Flow
+The registry uses `TypeId` for type-erased lookup, ensuring type safety without runtime overhead for type mismatches.
 
-```
-Principal requests capability
-        │
-        ▼
-Policy evaluation
-        │
-    ┌───┴───┐
-    ▼       ▼
- Allow   Require Approval
-    │       │
-    │       ▼
-    │    Show approval request
-    │       │
-    │       ▼
-    │    User/system decides
-    │       │
-    │   ┌───┴───┐
-    │   ▼       ▼
-    │ Approve  Deny
-    │   │       │
-    ▼   ▼       ▼
-Execute      Reject
-```
+## Capability Examples
 
-## Default Policies
-
-### Runtime Defaults
+### File Handle
 
 ```rust
-impl Default for Policy {
-    fn default() -> Self {
-        Self {
-            rules: vec![
-                // Always allow read operations
-                PolicyRule::AlwaysAllow { capability: Capability::SystemRead },
+#[derive(Debug)]
+struct FileHandle {
+    path: String,
+    writable: bool,
+}
 
-                // Require approval for write operations from agents
-                PolicyRule::RequireApproval {
-                    capability: Capability::SystemWrite,
-                    approver: ApprovalSource::User,
-                },
-
-                // Deny dangerous operations by default
-                PolicyRule::AlwaysDeny { capability: Capability::NetworkConnect { hosts: vec![] } },
-                PolicyRule::AlwaysDeny { capability: Capability::ExtensionExecute },
-            ],
-        }
-    }
+impl ResourceHandle for FileHandle {
+    fn resource_type(&self) -> &str { "FileHandle" }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 ```
 
-### Extension Defaults
-
-Extensions start with minimal capabilities:
+### Network Socket
 
 ```rust
-impl Extension {
-    fn default_capabilities() -> Capabilities {
-        let mut caps = Capabilities::new();
-        caps.grant(Capability::WorkspaceRead);
-        caps
-    }
+#[derive(Debug)]
+struct NetworkSocket {
+    host: String,
+    port: u16,
+}
+
+impl ResourceHandle for NetworkSocket {
+    fn resource_type(&self) -> &str { "NetworkSocket" }
+    fn as_any(&self) -> &dyn std::any::Any { self }
 }
 ```
 
-## Resource Protection
+## Ownership Model
 
-### Protected Resources
+Each capability tracks which actor owns it:
 
 ```rust
-pub enum ResourceId {
-    Buffer(BufferId),
-    File(PathBuf),
-    Process(ProcessId),
-    Workspace(WorkspaceId),
-    Project(ProjectId),
-}
+let cap = Capability::new(actor_id, my_resource);
+assert_eq!(cap.owner(), actor_id);
 ```
 
-### Access Control
+This enables ownership-based access control — actors can only use capabilities they own or have been explicitly granted (by receiving a `Capability` message from another actor).
+
+## Thread Safety
+
+All resource types must be `Send + Sync`:
 
 ```rust
-impl Runtime {
-    pub fn check_access(
-        &self,
-        principal: PrincipalId,
-        resource: ResourceId,
-        operation: Operation,
-    ) -> Result<(), AccessError> {
-        let capabilities = self.get_capabilities(principal)?;
-        let required = self.required_capability(resource, operation)?;
-
-        capabilities.require(&required)
-    }
-}
+pub trait ResourceHandle: Any + Send + Sync + fmt::Debug + 'static
 ```
 
-## Audit
+This ensures resources can be safely shared across the runtime's worker threads.
 
-### Security Audit Log
+## Panic Safety
 
-```rust
-pub struct SecurityAuditLog {
-    entries: Vec<SecurityAuditEntry>,
-}
+Compute tasks are isolated — panics are caught at the worker boundary and surfaced as `ComputeError::WorkerPanic`. This prevents a single faulty operation from crashing the runtime.
 
-pub struct SecurityAuditEntry {
-    pub entry_id: MessageId,
-    pub timestamp: Timestamp,
-    pub principal_id: PrincipalId,
-    pub capability: Capability,
-    pub resource: ResourceId,
-    pub decision: PolicyDecision,
-    pub context: String,
-}
-```
+## Best Practices
 
-### Audit Queries
-
-```rust
-impl SecurityAuditLog {
-    pub fn query_by_principal(&self, id: PrincipalId) -> Vec<&SecurityAuditEntry>;
-    pub fn query_by_capability(&self, cap: &Capability) -> Vec<&SecurityAuditEntry>;
-    pub fn query_by_time(&self, start: Timestamp, end: Timestamp) -> Vec<&SecurityAuditEntry>;
-    pub fn query_denials(&self) -> Vec<&SecurityAuditEntry>;
-}
-```
-
-## Threat Model
-
-### Threats
-
-1. **Malicious agent** — Agent attempts unauthorized operations
-2. **Malicious extension** — Extension attempts to escalate privileges
-3. **Compromised process** — Process attempts to access unauthorized resources
-4. **Social engineering** — User tricked into granting excessive permissions
-
-### Mitigations
-
-1. **Capability enforcement** — All operations checked
-2. **Audit logging** — All operations recorded
-3. **Approval gates** — Dangerous operations require explicit approval
-4. **Process isolation** — Processes cannot access each other's state directly
-5. **Extension sandboxing** — Extensions run with minimal capabilities
-
-## Configuration
-
-### Security Configuration
-
-```rust
-pub struct SecurityConfig {
-    pub policy: Policy,
-    pub audit_retention: Duration,
-    pub max_capabilities_per_agent: usize,
-    pub require_approval_above_risk: RiskLevel,
-}
-```
-
-### Runtime Security Setup
-
-```rust
-impl Runtime {
-    pub fn with_security_config(config: SecurityConfig) -> Self {
-        let mut runtime = Self::new();
-        runtime.policy = config.policy;
-        runtime.audit_log = SecurityAuditLog::new(config.audit_retention);
-        runtime
-    }
-}
-```
-
-## Observability
-
-### Security Metrics
-
-```rust
-pub struct SecurityMetrics {
-    pub access_checks: u64,
-    pub access_granted: u64,
-    pub access_denied: u64,
-    pub approvals_requested: u64,
-    pub approvals_granted: u64,
-    pub approvals_denied: u64,
-    pub audit_entries: u64,
-}
-```
-
-### Alerting
-
-```rust
-pub enum SecurityAlert {
-    ExcessiveDenials { principal_id: PrincipalId, count: usize },
-    UnauthorizedAccessAttempt { principal_id: PrincipalId, capability: Capability },
-    CapabilityEscalation { principal_id: PrincipalId, from: Capability, to: Capability },
-}
-```
+1. **One capability per resource type** — The registry uses `TypeId` for lookup
+2. **Keep handles small** — They're stored in a type-erased registry
+3. **Use capabilities for access control** — Only actors with the capability can use the resource
+4. **Clone to share** — `Arc` makes sharing cheap
+5. **Design capabilities around the principle of least privilege** — Grant only what the actor needs
+6. **Log capability usage** — Use `tracing` to record capability-related operations

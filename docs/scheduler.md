@@ -19,6 +19,8 @@ Runact Scheduler
 Worker Worker Worker
 ```
 
+The number of workers defaults to available CPU parallelism.
+
 ## Architecture
 
 ```text
@@ -33,6 +35,7 @@ Worker Worker Worker
 │      │      │      │      │      │      │      │      │
 │      ▼      │      ▼      │      ▼      │      ▼      │
 │  Actor A    │  Actor D    │  Actor G    │  Actor J    │
+│  (N reduc)  │  (N reduc)  │  (N reduc)  │  (N reduc)  │
 └─────────────┴─────────────┴─────────────┴──────────────┘
                     │
             Work Stealing
@@ -46,32 +49,66 @@ Top-level coordinator.
 
 ```rust
 pub struct Scheduler {
-    workers: Vec<Worker>,
-    sender: Option<Sender<Task>>,
+    queues: Vec<RunQueue>,
+    next_worker: AtomicUsize,
     handles: Vec<JoinHandle<()>>,
+    stop: Arc<AtomicBool>,
 }
 ```
 
-### Worker
+- One `RunQueue` per worker
+- Round-robin initial dispatch (`next_worker.fetch_add % queues.len()`)
+- Atomic stop flag for shutdown
 
-Per-core scheduler with own run queue.
+### Worker Loop
 
 ```rust
-struct Worker {
-    id: usize,
-    queue: Arc<Mutex<VecDeque<Task>>>,
+fn worker_loop(local_queue: RunQueue, steal_targets: Vec<RunQueue>, stop: Arc<AtomicBool>) {
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
+
+        // 1. Check own queue
+        if let Some(task) = local_queue.pop() {
+            task();
+            continue;
+        }
+
+        // 2. Try to steal from other workers
+        let mut stolen = false;
+        for target in &steal_targets {
+            let stolen_tasks = target.steal_half();
+            if !stolen_tasks.is_empty() {
+                for task in stolen_tasks {
+                    local_queue.push(task);
+                }
+                stolen = true;
+                break;
+            }
+        }
+
+        // 3. If nothing to do, yield CPU
+        if !stolen {
+            thread::yield_now();
+        }
+    }
 }
 ```
 
 ### RunQueue
 
-Lock-free MPSC queue per worker.
+Lock-based queue with work-stealing support.
 
 ```rust
-struct RunQueue {
+pub struct RunQueue {
     queue: Arc<Mutex<VecDeque<Task>>>,
 }
 ```
+
+- `push` — adds task to back
+- `pop` — removes task from front (local worker)
+- `steal_half` — drains first half of queue (victim)
 
 ### ReductionCounter
 
@@ -80,23 +117,26 @@ Prevents starvation by counting message processing.
 ```rust
 pub const MAX_REDUCTIONS: u64 = 4000;
 
-struct ReductionCounter {
+pub struct ReductionCounter {
     count: AtomicU64,
 }
 ```
+
+After each message is processed by an actor, the counter is incremented. When it reaches `MAX_REDUCTIONS`, the counter is reset and `thread::yield_now()` is called to give other workers a chance to run.
 
 ## Algorithm
 
 ### Basic Flow
 
 ```text
-1. Actor spawns → added to worker queue
-2. Worker picks actor from queue
-3. Actor processes one message
+1. Actor spawns → task added to worker queue (round-robin)
+2. Worker picks task from own queue (pop_front)
+3. Actor processes message
 4. Reduction counter increments
-5. If counter >= MAX_REDUCTIONS → preempt
-6. Otherwise → continue with next message
+5. If counter >= MAX_REDUCTIONS → yield (thread::yield_now)
+6. Otherwise → continue with next message from mailbox
 7. If no work → try to steal from other workers
+8. If nothing to steal → thread::yield_now
 ```
 
 ### Work Stealing
@@ -108,61 +148,14 @@ Worker 0 idle
 Check own queue → empty
     │
     ▼
-Try to steal from random worker
+Try to steal from other workers
     │
-    ├── Found work → execute
+    ├── Found work → execute stolen tasks
     │
-    └── No work → sleep briefly → retry
+    └── No work → yield → retry
 ```
 
-## Priorities
-
-The scheduler should prioritize:
-
-1. **Responsiveness** — Actors respond quickly
-2. **Fairness** — No actor starves
-3. **Throughput** — Process many messages
-4. **Predictability** — Consistent behavior
-
-## Implementation
-
-### Spawning an Actor
-
-```rust
-impl Scheduler {
-    pub fn spawn<F>(&self, f: F)
-    where
-        F: FnOnce() + Send + 'static,
-    {
-        if let Some(sender) = &self.sender {
-            let _ = sender.send(Box::new(f));
-        }
-    }
-}
-```
-
-### Worker Loop
-
-```rust
-fn worker_loop(id: usize, queue: Arc<Mutex<VecDeque<Task>>>) {
-    loop {
-        let task = {
-            let mut q = queue.lock().unwrap();
-            q.pop_front()
-        };
-
-        match task {
-            Some(task) => {
-                task();
-            }
-            None => {
-                // No work available, yield
-                thread::yield_now();
-            }
-        }
-    }
-}
-```
+The `steal_half()` method takes half of the victim's queue (rounded down), moving tasks to the stealing worker's local queue.
 
 ## Configuration
 
@@ -173,35 +166,47 @@ let scheduler = Scheduler::new();
 ```
 
 - Workers = available parallelism (usually CPU cores)
-- Queue capacity = unbounded initially
+- Queue capacity = unbounded
 - Reduction limit = 4000
 
-### Custom Settings
+### Worker Count
 
 ```rust
-let scheduler = Scheduler::with_config(SchedulerConfig {
-    num_workers: 8,
-    max_reductions: 2000,
-});
+pub fn worker_count(&self) -> usize {
+    self.queues.len()
+}
 ```
 
 ## Cooperative Scheduling
 
 ### Why Cooperative?
 
-Rust code cannot safely be arbitrarily preempted at any instruction boundary. Runact uses cooperative scheduling at safe execution boundaries.
+Rust code cannot safely be arbitrarily preempted at any instruction boundary. Runact uses cooperative scheduling at safe execution boundaries — after each message is processed, the actor handler returns and the scheduler decides whether to continue or yield.
 
 ### How It Works
 
+The actor's message loop (inside `Runtime::spawn`):
+
 ```rust
-fn handle(&mut self, msg: Message, ctx: &mut ActorContext) -> Result<(), ActorError> {
-    // Process one message
-    self.process(msg);
-    
-    // Yield back to scheduler
-    // (Implicit - handler returns)
-    
-    Ok(())
+loop {
+    match rx.recv_timeout(Duration::from_millis(10)) {
+        Ok(envelope) => {
+            // Process message...
+            ctx.set_reply_sender(None);
+            let _ = actor.handle(*msg, &mut ctx);
+
+            // Cooperative yield after MAX_REDUCTIONS messages
+            if reductions.increment() >= MAX_REDUCTIONS {
+                reductions.reset();
+                std::thread::yield_now();
+            }
+        }
+        Err(RecvTimeoutError::Timeout) => {
+            reductions.reset();
+            continue;
+        }
+        Err(RecvTimeoutError::Disconnected) => break,
+    }
 }
 ```
 
@@ -210,28 +215,27 @@ fn handle(&mut self, msg: Message, ctx: &mut ActorContext) -> Result<(), ActorEr
 - Process one message
 - Perform bounded work
 - Return quickly
-- Don't loop forever
-- Don't block on I/O
+- Don't loop forever inside a single handler invocation
+- Don't block on I/O (use timers or compute pool)
 
 ### What Actors Should NOT Do
 
-- Run for milliseconds
+- Run for milliseconds without yielding
 - Block on external resources
 - Spin in loops
 - Call `thread::sleep`
-- Perform CPU-intensive work (use compute pool)
+- Perform CPU-intensive work (use `ctx.spawn_compute` instead)
 
 ## Monitoring
 
 ### Metrics
 
+The runtime exposes basic observability via `tracing` and `RuntimeStats`:
+
 ```rust
-pub struct SchedulerMetrics {
-    pub worker_count: usize,
-    pub total_actors: usize,
-    pub messages_processed: u64,
-    pub steals_attempted: u64,
-    pub steals_succeeded: u64,
+pub struct RuntimeStats {
+    pub actor_count: usize,
+    pub request_count: u64,
 }
 ```
 
@@ -239,36 +243,52 @@ pub struct SchedulerMetrics {
 
 ```rust
 // Trace actor execution
-tracing::debug!(
-    actor_id = %actor_id,
-    message_count = count,
-    duration_ms = elapsed.as_millis(),
-    "Actor executed"
-);
+tracing::info!(actor_id = %id, "spawned actor");
+tracing::debug!(target_id = %target, "send");
+tracing::trace!(actor_id = %id, "handling message");
 ```
 
-## Future Enhancements
+### Logging Levels
 
-### Priority Scheduling
+| Level | Events |
+|-------|--------|
+| `info` | Actor spawned, actor stopped, runtime shutdown |
+| `debug` | Message sent, request sent |
+| `trace` | Per-message handling |
+| `warn` | Actor restarted (via supervisor) |
+| `error` | Max restarts exceeded, actor failures |
 
-```rust
-enum Priority {
-    Critical,
-    High,
-    Normal,
-    Low,
-}
-```
+## Development Phases
 
-### Actor Affinity
+### Phase 1 — Runtime Core (v1.0.0)
 
-```rust
-// Pin actor to specific worker
-scheduler.spawn_with_affinity(actor, worker_id);
-```
+- ✅ `src/actor/` — ActorId, Actor trait, ActorContext
+- ✅ `src/mailbox/` — Mailbox with backpressure policies
+- ✅ `src/scheduler/` — BEAM-style scheduler with work stealing
+- ✅ `src/runtime.rs` — Top-level coordinator
+- ✅ Message passing (fire-and-forget, request/reply)
+- ✅ Actor-to-actor communication
+- ✅ Graceful shutdown
+- ✅ Reduction counting (cooperative preemption)
 
-### Work Stealing Strategies
+### Phase 2 — Reliability
 
-- Random victim
-- Least loaded victim
-- Nearest neighbor
+- ✅ `src/supervision/` — Supervisor, ChildSpec, RestartStrategy
+- ✅ One-for-one restart strategy with exponential backoff
+- ✅ Crash isolation (compute tasks)
+- ✅ Restart limits
+
+### Phase 3 — Compute
+
+- ✅ `src/compute/` — ComputeScheduler, ComputeHandle
+- ✅ Bounded queue
+- ✅ Task submission from actors
+- ✅ Panic isolation
+
+### Future Phases
+
+- Timers (✅ v1.0.0)
+- Cancellation (compute task cancellation, ✅ v1.0.0)
+- Resources and capabilities (✅ v1.0.0)
+- Tracing (✅ v1.0.0)
+- Stress testing and performance optimization

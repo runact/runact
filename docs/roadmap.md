@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document outlines the development phases for Runact. Each phase builds on the previous one. Runact is the runtime; Paper is a separate editor project built on top of it.
+This document outlines the development phases for Runact. Runact is the runtime; PaperOS is a separate editor project built on top of it.
 
 ---
 
@@ -10,8 +10,9 @@ This document outlines the development phases for Runact. Each phase builds on t
 
 | Component | Status | Tests |
 |-----------|--------|-------|
-| **Runact** (runtime) | Phases 0–5 complete, v0.5–v0.9 complete, v1.0.0 released | 48/48 passing |
-| **Paper** (editor) | Separate project — see `paper/docs/roadmap.md` | Compiles |
+| **Runact** (runtime) | v1.0.0 released | 19+ test files across basic, compute, observability, resource, scheduler, timer |
+
+**Paper** (editor) — Separate project, tracked at `paper/docs/roadmap.md`
 
 ---
 
@@ -19,11 +20,18 @@ This document outlines the development phases for Runact. Each phase builds on t
 
 ### Deliverables
 
-- [x] `docs/architecture.md`
-- [x] `docs/actors.md`
-- [x] `docs/actor-communication.md`
-- [x] `docs/roadmap.md`
-- [x] Single-crate structure
+- ✅ `docs/architecture.md` — Full architectural document (v1.0.0)
+- ✅ `docs/actors.md` — Actor trait, ActorId, ActorContext
+- ✅ `docs/actor-communication.md` — 24 communication principles
+- ✅ `docs/scheduler.md` — BEAM-style scheduler with work stealing
+- ✅ `docs/supervision.md` — Supervision trees, restart strategies
+- ✅ `docs/runtime.md` — Runtime API, RequestHandle, RuntimeConfig
+- ✅ `docs/vision.md` — Vision and design priorities
+- ✅ `docs/roadmap.md` — This document
+- ✅ `docs/security.md` — Capability-based security
+- ✅ `docs/adr/0001-beam-style-scheduler.md` — ADR for scheduler choice
+- ✅ `docs/adr/0002-dual-scheduler-architecture.md` — ADR for dual scheduler
+- ✅ Single-crate structure
 
 ---
 
@@ -31,14 +39,14 @@ This document outlines the development phases for Runact. Each phase builds on t
 
 ### Deliverables
 
-- [x] `src/actor/` — ActorId, Actor trait, ActorContext
-- [x] `src/mailbox/` — Mailbox using crossbeam-channel
-- [x] `src/scheduler/` — BEAM-style scheduler with work stealing
-- [x] `src/runtime.rs` — Top-level coordinator
-- [x] Message passing (fire-and-forget, request/reply)
-- [x] Actor-to-actor communication
-- [x] Graceful shutdown
-- [x] Reduction counting (cooperative preemption)
+- ✅ `src/actor/` — ActorId, Actor trait, ActorContext
+- ✅ `src/mailbox/` — Mailbox with backpressure policies
+- ✅ `src/scheduler/` — BEAM-style scheduler with work stealing
+- ✅ `src/runtime.rs` — Top-level coordinator
+- ✅ Message passing (fire-and-forget, request/reply)
+- ✅ Actor-to-actor communication
+- ✅ Graceful shutdown
+- ✅ Reduction counting (cooperative preemption)
 
 ---
 
@@ -46,10 +54,10 @@ This document outlines the development phases for Runact. Each phase builds on t
 
 ### Deliverables
 
-- [x] `src/supervision/` — Supervisor, ChildSpec, RestartStrategy
-- [x] One-for-one restart strategy
-- [x] Restart limits
-- [x] Crash isolation
+- ✅ `src/supervision/` — Supervisor, ChildSpec, RestartStrategy
+- ✅ One-for-one restart strategy with exponential backoff
+- ✅ Restart limits (`max_restarts`, `within` window)
+- ✅ Crash isolation for compute tasks
 
 ---
 
@@ -57,11 +65,12 @@ This document outlines the development phases for Runact. Each phase builds on t
 
 ### Deliverables
 
-- [x] `src/compute/` — ComputeScheduler, ComputeHandle, ComputeError
-- [x] Bounded queue
-- [x] Task submission from actors
-- [x] Panic isolation
-- [x] Try_recv/recv_timeout for non-blocking polling
+- ✅ `src/compute/` — ComputeScheduler, ComputeHandle, ComputeError
+- ✅ Bounded queue (soft limit via `queue_capacity`)
+- ✅ Task submission from actors via `ctx.spawn_compute`
+- ✅ Panic isolation at worker boundary
+- ✅ `try_recv`/`recv_timeout` for non-blocking polling
+- ✅ Cooperative cancellation via `ComputeHandle::cancel()`
 
 ---
 
@@ -69,11 +78,12 @@ This document outlines the development phases for Runact. Each phase builds on t
 
 ### Deliverables
 
-- [x] `src/timer/` — TimerService, TimerHandle, TimerId
-- [x] One-shot timers
-- [x] Periodic timers
-- [x] Timer cancellation
-- [x] Actor-context timer scheduling
+- ✅ `src/timer/` — TimerService, TimerHandle, TimerId
+- ✅ One-shot timers (`schedule_timer`)
+- ✅ Periodic timers (`schedule_interval`)
+- ✅ Timer cancellation (`cancel_timer`)
+- ✅ Actor-context timer scheduling (`ctx.schedule_timer`)
+- ✅ Drift correction for periodic timers
 
 ---
 
@@ -81,81 +91,35 @@ This document outlines the development phases for Runact. Each phase builds on t
 
 ### Deliverables
 
-- [x] `src/resource/` — ResourceHandle, Capability, ResourceRegistry
-- [x] Generic capability wrapper
-- [x] Type-safe resource registry
+- ✅ `src/resource/` — ResourceHandle, Capability, ResourceRegistry
+- ✅ Generic capability wrapper with owner tracking
+- ✅ Type-safe resource registry (`TypeId`-based)
+- ✅ Thread-safe resources (`Send + Sync`)
 
 ---
 
-## Roadmap to v1
+## Phase 6 — Editor Runtime (PaperOS)
 
-### v0.5 — API Hardening ✅
+PaperOS is a separate project. Runact provides the foundation.
 
-| Task | Status |
-|------|--------|
-| Audit public API surface — hide internals, finalize exports | ✅ |
-| `#[must_use]` on critical return types | ✅ |
-| `RuntimeConfig` re-exported | ✅ |
-| Clippy clean (`-D warnings`) | ✅ |
-| Zero dead code warnings | ✅ |
+- ✅ Runact is runtime-independent of any editor
+- ✅ APIs are stable and documented
 
-### v0.6 — Observability ✅
+---
 
-| Task | Status |
-|------|--------|
-| Structured logging via `tracing` (actor spawn, message send, crash) | ✅ |
-| Actor metrics: message count, queue depth, reduction count | ✅ |
-| `Runtime::stats()` — snapshot of runtime health | ✅ |
-| Supervisor crash reporting with backtrace capture | ✅ |
+## Phase 7 — Programmability
 
-### v0.7 — Robustness ✅
+Future work:
 
-| Task | Status |
-|------|--------|
-| Backpressure: bounded mailbox with `MailboxFull` policy (drop/reject/block) | ✅ |
-| Actor stop/shutdown: graceful drain before kill | ✅ |
-| `Supervisor` restart backoff (exponential, configurable) | ✅ |
-| Timer drift correction for periodic timers | ✅ |
-| Compute pool: task timeout and cancellation | ✅ |
-
-### v0.8 — Documentation ✅
-
-| Task | Priority |
-|------|----------|
-| Rustdoc for every public type and method | ✅ |
-| Guide: "Getting Started" — spawn actor, send message, receive reply | ✅ |
-| Guide: "Supervision" — restart strategies, failure handling | ✅ |
-| Guide: "Compute" — offloading CPU work | ✅ |
-| Guide: "Timers" — scheduling messages | ✅ |
-| Guide: "Resources" — capability-oriented access | ✅ |
-| `cargo doc` builds clean (zero warnings) | ✅ |
-
-### v0.9 — Benchmarks ✅
-
-| Task | Priority |
-|------|----------|
-| 100K concurrent actors benchmark | ✅ (~1.5s spawn) |
-| Message latency benchmark (< 10μs target) | ✅ (~6-13μs request-reply) |
-| Work stealing throughput benchmark | ✅ |
-| Memory per actor benchmark (< 1KB target) | ✅ (RSS tracking) |
-| `cargo bench` with criterion | ✅ |
-
-### v1.0 — Release ✅
-
-| Task | Priority |
-|------|----------|
-| `CHANGELOG.md` | ✅ |
-| CI: GitHub Actions (test, clippy, rustfmt, MSRV) | ✅ |
-| MSRV policy: Rust 1.80 (last 3 stable releases) | ✅ |
-| Security audit: zero `unsafe` in source | ✅ |
-| `Cargo.toml` metadata (keywords, categories, readme) | ✅ |
-| `README.md` | ✅ |
+- Extension API
+- Scripting integration
+- Distributed actors (local semantics must be stable first)
 
 ---
 
 ## Timeline
 
-```
+```text
 Now ─────── v0.5 ──── v0.6 ──── v0.7 ──── v0.8 ──── v0.9 ──── v1.0
             │         │         │         │         │         │
             │         │         │         │         │         └─ Runact v1.0
@@ -172,41 +136,34 @@ Now ─────── v0.5 ──── v0.6 ──── v0.7 ──── 
 
 ### Runtime
 
-- 100K+ concurrent actors
-- Message latency < 10μs
-- Work stealing across cores
-- No starvation
-- Memory per actor < 1KB
-- Supervisor restart reliability: 100%
-- Crash isolation: verified
-
-### Editor
-
-- Working editor
-- Responsive UI
-- Real-world functionality
-- Extensions work
-
-> Editor milestones are tracked in `paper/docs/roadmap.md`.
+- 100K+ concurrent actors (benchmarked in `benches/runact_bench.rs`)
+- Message latency < 10μs (request-reply benchmarked)
+- Work stealing across cores (scheduler tests)
+- No starvation (reduction counting)
+- Memory per actor < 1KB (RSS tracking benchmarked)
+- Supervisor restart reliability: 100% (supervisor tests)
+- Crash isolation: verified (compute tests)
 
 ---
 
 ## Long-Term Evolution
 
-```
+```text
 Runtime Core
     ↓
 Reliability (Supervision)
     ↓
 Compute Pool
     ↓
-Timers and I/O
+Timers and Cancellation
     ↓
 Resources and Capabilities
     ↓
-Editor Runtime (Paper)
+Editor Runtime (PaperOS)
     ↓
 Programmable Environment
+    ↓
+Optional Distributed Runtime
 ```
 
 The runtime must earn every layer of complexity.

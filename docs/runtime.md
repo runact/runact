@@ -2,71 +2,80 @@
 
 ## Overview
 
-The Runact runtime is the execution kernel. It manages processes, message delivery, scheduling, supervision, and timers. Uses a custom BEAM-style scheduler with work stealing. No Tokio types leak through public APIs.
+The Runact runtime is the execution kernel. It manages processes (actors), message delivery, scheduling, supervision, and timers. Uses a custom BEAM-style scheduler with work stealing. No Tokio types leak through public APIs.
 
 ## Core Concepts
 
-### Process
+### Actor
 
-A Process is an independent unit of computation with:
+An Actor is an independent unit of computation with:
 
-- Stable `ProcessId`
+- Stable `ActorId`
 - Owns mutable state
 - Receives messages sequentially
 - Processes one message at a time
-- Can send messages to other processes
-- Can spawn child processes
+- Can send messages to other actors
+- Can spawn child actors (via supervisor)
 - Can be supervised
-- Can be monitored
-- Can be cancelled
 - Can schedule timers
+- Can submit compute tasks
+- Can reply to requests
 
 ```rust
-pub trait Process: Send + 'static {
+pub trait Actor: Send + 'static {
     type Message: Send + 'static;
 
     fn handle(
         &mut self,
         message: Self::Message,
-        context: &mut ProcessContext,
-    ) -> Result<(), ProcessError>;
+        context: &mut ActorContext,
+    ) -> Result<(), ActorError>;
 }
 ```
 
-### ProcessId
+### ActorId
 
-A stable, unique identifier for a process.
+A stable, unique identifier for an actor.
 
 - Created at spawn time
 - Never reused within a runtime instance
-- Serializable
+- Serializable (via `serde`)
 - Orderable (for debugging)
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ProcessId(u64);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ActorId(u64);
 ```
 
-### ProcessContext
+### ActorContext
 
-Provided to process handlers. Provides access to:
-
-- Sending messages
-- Spawning child processes
-- Scheduling timers
-- Accessing runtime information
+Provided to actor handlers.
 
 ```rust
-pub struct ProcessContext {
-    process_id: ProcessId,
-    sender: MessageSender,
-    runtime_handle: RuntimeHandle,
+pub struct ActorContext {
+    actor_id: ActorId,
+    _sender: crossbeam_channel::Sender<MessageEnvelope>,
+    senders: Option<SenderMap>,
+    reply_sender: Option<ReplySender>,
+    compute_sender: Option<crossbeam_channel::Sender<Task>>,
+    timer_handle: Option<TimerHandle>,
 }
 ```
 
-### ProcessLifecycle
+### Capabilities
 
-```
+- `actor_id()` — Get own ID
+- `send_to(target, msg)` — Send fire-and-forget message to another actor
+- `reply(msg)` — Reply to a request
+- `is_request()` — Check if current message expects a reply
+- `spawn_compute(job)` — Submit CPU-intensive task
+- `schedule_timer(dur, msg)` — One-shot timer
+- `schedule_interval(interval, msg)` — Periodic timer
+- `cancel_timer(timer_id)` — Cancel a timer
+
+### Lifecycle
+
+```text
 spawned → running → stopping → stopped
     │                  │
     │                  └──→ terminated
@@ -76,26 +85,24 @@ spawned → running → stopping → stopped
 
 States:
 
-- **spawned** — Process created, not yet scheduled
-- **running** — Process is executing
+- **spawned** — Actor created, not yet scheduled
+- **running** — Actor is executing
 - **stopping** — Graceful shutdown initiated
-- **stopped** — Process completed normally
-- **terminated** — Process was forcibly stopped
-- **failed** — Process crashed or returned error
-- **restarting** — Supervisor is restarting the process
+- **stopped** — Actor completed normally
+- **terminated** — Actor was forcibly stopped
+- **failed** — Actor crashed or returned error
+- **restarting** — Supervisor is restarting the actor
 
 ## Mailbox
 
-A typed message queue for a process.
+Each actor has a mailbox with bounded capacity.
 
 ### Requirements
 
-- FIFO ordering within a process
-- Configurable capacity
-- Backpressure policy
-- Cancellation support
-- Shutdown behavior
-- Metrics
+- FIFO ordering within an actor
+- Configurable capacity (default: 1000)
+- Backpressure policy: Reject (default) or Block
+- Shutdown behavior: drain remaining messages
 
 ### Backpressure Strategies
 
@@ -103,40 +110,36 @@ When the mailbox is full:
 
 | Strategy | Behavior |
 |----------|----------|
-| `Reject` | Return error to sender |
-| `Block` | Sender waits until space available |
-| `DropLowPriority` | Drop lowest priority message |
-| `Coalesce` | Merge compatible messages |
-| `Escalate` | Notify supervisor |
+| `Reject` | Return `RuntimeError::MailboxFull` to sender |
+| `Block` | Sender waits until space available (`send_blocking`) |
 
-The correct strategy depends on message type.
+### BackpressurePolicy (Internal)
+
+```rust
+pub(crate) enum BackpressurePolicy {
+    Reject,
+    Block,
+    DropLowPriority,
+}
+```
 
 ### Mailbox Interface
 
-```rust
-pub struct Mailbox<T> {
-    capacity: usize,
-    backpressure: BackpressurePolicy,
-    metrics: MailboxMetrics,
-}
+The actual mailbox used by the runtime is `crossbeam_channel::bounded`:
 
-impl<T> Mailbox<T> {
-    pub fn send(&self, message: T) -> Result<(), MailboxError>;
-    pub fn receive(&self) -> Option<T>;
-    pub fn len(&self) -> usize;
-    pub fn is_empty(&self) -> bool;
-}
+```rust
+let (tx, rx) = crossbeam_channel::bounded::<MessageEnvelope>(self.mailbox_capacity);
 ```
 
 ### Metrics
 
+Mailbox depth is exposed via `ActorInfo`:
+
 ```rust
-pub struct MailboxMetrics {
-    pub depth: usize,
-    pub high_watermark: usize,
-    pub messages_received: u64,
-    pub messages_dropped: u64,
-    pub messages_rejected: u64,
+pub struct ActorInfo {
+    pub id: ActorId,
+    pub name: Option<String>,
+    pub mailbox_depth: usize,
 }
 ```
 
@@ -146,7 +149,7 @@ BEAM-style scheduler with work stealing.
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    Scheduler                            │
 ├─────────────┬─────────────┬─────────────┬──────────────┤
@@ -157,8 +160,7 @@ BEAM-style scheduler with work stealing.
 │  └───────┘  │  └───────┘  │  └───────┘  │  └───────┘  │
 │      │      │      │      │      │      │      │      │
 │      ▼      │      ▼      │      ▼      │      ▼      │
-│  Process A  │  Process D  │  Process G  │  Process J  │
-│  (N reduc)  │  (N reduc)  │  (N reduc)  │  (N reduc)  │
+│  Actor A    │  Actor D    │  Actor G    │  Actor J    │
 └─────────────┴─────────────┴─────────────┴──────────────┘
                     │
             Work Stealing
@@ -166,62 +168,35 @@ BEAM-style scheduler with work stealing.
 
 ### Requirements
 
-- Lightweight process creation
+- Lightweight actor creation
 - Work stealing across cores
 - Per-worker run queues
 - Cooperative scheduling with reduction counting
-- Cancellation
-- Timers
+- Cancellation (via stop flag)
+- Timers (via TimerService)
 - Process lifecycle management
 
 ### Scheduler Interface
 
 ```rust
 pub struct Scheduler {
-    workers: Vec<Worker>,
+    queues: Vec<RunQueue>,
+    next_worker: AtomicUsize,
+    handles: Vec<JoinHandle<()>>,
+    stop: Arc<AtomicBool>,
 }
 
 impl Scheduler {
-    pub fn new(num_workers: Option<usize>) -> Self;
-    pub fn start(&mut self);
-    pub fn stop(&mut self);
+    pub fn new() -> Self;
+    pub fn spawn<F>(&self, f: F) where F: FnOnce() + Send + 'static;
+    pub fn shutdown(&mut self);
     pub fn worker_count(&self) -> usize;
 }
 ```
 
-### Worker
-
-Per-core scheduler with own run queue.
-
-```rust
-pub struct Worker {
-    id: usize,
-    run_queue: Arc<RunQueue>,
-    reduction_counter: ReductionCounter,
-}
-```
-
-### RunQueue
-
-Lock-free MPSC queue per worker.
-
-```rust
-pub struct RunQueue {
-    // Lock-free implementation
-}
-
-impl RunQueue {
-    pub fn new() -> Self;
-    pub fn push(&self, task: Arc<dyn Send + Sync + 'static>);
-    pub fn pop(&self) -> Option<Arc<dyn Send + Sync + 'static>>;
-    pub fn is_empty(&self) -> bool;
-    pub fn len(&self) -> usize;
-}
-```
+Workers spawn at `new()` and default to `available_parallelism()` count. The round-robin dispatch uses `next_worker.fetch_add(1, Ordering::Relaxed) % queues.len()`.
 
 ### ReductionCounter
-
-Prevents starvation by counting message processing.
 
 ```rust
 pub const MAX_REDUCTIONS: u64 = 4000;
@@ -234,13 +209,10 @@ impl ReductionCounter {
     pub fn new() -> Self;
     pub fn increment(&self) -> u64;
     pub fn reset(&self);
-    pub fn should_preempt(&self) -> bool;
 }
 ```
 
-### Exit Criterion
-
-The scheduler must support 100K+ concurrent processes reliably.
+After each message is processed, the counter is incremented. When it reaches `MAX_REDUCTIONS`, the counter is reset and `thread::yield_now()` is called.
 
 ## Compute Scheduler
 
@@ -248,7 +220,7 @@ For CPU-intensive tasks that would starve actors.
 
 ### Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                 Compute Scheduler                       │
 ├─────────────┬─────────────┬─────────────┬──────────────┤
@@ -262,15 +234,13 @@ For CPU-intensive tasks that would starve actors.
 │  Run to     │  Run to     │  Run to     │  Run to     │
 │  completion │  completion │  completion │  completion │
 └─────────────┴─────────────┴─────────────┴──────────────┘
-                    │
-            Work Stealing
 ```
 
 ### Requirements
 
 - CPU-intensive tasks run to completion
 - Work stealing across cores
-- Bounded queue for backpressure
+- Bounded queue for backpressure (soft limit via `queue_capacity` config)
 - Panic isolation at worker boundary
 - Oneshot result channel
 - Never block actors
@@ -279,14 +249,16 @@ For CPU-intensive tasks that would starve actors.
 
 ```rust
 pub struct ComputeScheduler {
-    pool: ThreadPool,
-    sender: crossbeam_channel::Sender<Task>,
-    config: ComputeConfig,
+    sender: Option<crossbeam_channel::Sender<Task>>,
+    handles: Vec<JoinHandle<()>>,
+    _config: ComputeConfig,
+    stop: Arc<AtomicBool>,
 }
 
 pub struct ComputeConfig {
-    pub max_workers: usize,
-    pub queue_capacity: usize,
+    pub max_workers: usize,        // Defaults to available parallelism
+    pub queue_capacity: usize,     // Soft limit (default: 1024)
+    pub task_timeout: Option<Duration>,  // Reserved for future use
 }
 
 impl ComputeScheduler {
@@ -295,7 +267,8 @@ impl ComputeScheduler {
     where
         F: FnOnce() -> T + Send + 'static,
         T: Send + 'static;
-    pub fn shutdown(self);
+    pub fn sender(&self) -> Option<crossbeam_channel::Sender<Task>>;
+    pub fn shutdown(&mut self);
 }
 ```
 
@@ -305,8 +278,9 @@ impl ComputeScheduler {
 pub struct Task {
     pub id: TaskId,
     pub job: Box<dyn FnOnce() -> Box<dyn Any + Send> + Send>,
-    pub result_sender: oneshot::Sender<ComputeResult>,
+    pub result_sender: crossbeam_channel::Sender<ComputeResult>,
     pub created_at: Instant,
+    pub cancelled: Arc<AtomicBool>,
 }
 ```
 
@@ -317,7 +291,8 @@ pub enum ComputeResult {
     Ok(Box<dyn Any + Send>),
     Err(ComputeError),
     Panic(String),
-    Rejected,
+    Timeout,        // Reserved for future use
+    Cancelled,
 }
 ```
 
@@ -325,14 +300,17 @@ pub enum ComputeResult {
 
 ```rust
 pub struct ComputeHandle<T> {
-    receiver: oneshot::Receiver<ComputeResult>,
+    receiver: crossbeam_channel::Receiver<ComputeResult>,
+    cancelled: Arc<AtomicBool>,
     _phantom: PhantomData<T>,
 }
 
 impl<T> ComputeHandle<T> {
-    pub fn try_recv(&self) -> Option<Result<T, ComputeError>>;
-    pub fn recv(self) -> Result<T, ComputeError>;
-    pub fn recv_timeout(self, timeout: Duration) -> Result<T, ComputeError>;
+    pub fn cancel(&self);
+    pub fn is_cancelled(&self) -> bool;
+    pub fn try_recv(&self) -> Option<Result<T, ComputeError>> where T: 'static;
+    pub fn recv(self) -> Result<T, ComputeError> where T: 'static;
+    pub fn recv_timeout(self, timeout: Duration) -> Result<T, ComputeError> where T: 'static;
 }
 ```
 
@@ -341,44 +319,14 @@ impl<T> ComputeHandle<T> {
 Workers catch panics at the boundary:
 
 ```rust
-// Inside worker thread
-let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-    (task.job)()
-}));
-
-match result {
-    Ok(value) => task.result_sender.send(ComputeResult::Ok(Box::new(value))),
-    Err(panic) => {
-        let msg = panic.downcast_ref::<&str>()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "Unknown panic".to_string());
-        task.result_sender.send(ComputeResult::Panic(msg))
-    }
-}
+let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (task.job)()));
 ```
+
+Panics are surfaced as `ComputeResult::Panic(msg)` and then as `ComputeError::WorkerPanic(msg)`.
 
 ### Backpressure
 
-When queue is full, reject immediately:
-
-```rust
-match self.sender.try_send(task) {
-    Ok(()) => Ok(ComputeHandle::new(result_receiver)),
-    Err(crossbeam_channel::TrySendError::Full(_)) => {
-        Err(ComputeError::QueueFull)
-    }
-    Err(crossbeam_channel::TrySendError::Closed(_)) => {
-        Err(ComputeError::SchedulerShutdown)
-    }
-}
-```
-
-### Exit Criterion
-
-- CPU-intensive tasks run to completion
-- Actors never block on compute tasks
-- Panic isolation works
-- Backpressure prevents memory exhaustion
+When the compute queue is full (unbounded channel in current implementation — queue_capacity is a soft limit not yet enforced), tasks are still accepted. The `ComputeError::QueueFull` error variant exists for future bounded queue support.
 
 ## Timer
 
@@ -387,79 +335,128 @@ Scheduled message delivery.
 ### Types
 
 - **One-shot** — Fire once after delay
-- **Periodic** — Fire repeatedly at interval
-- **Deadline** — Fire at specific time
+- **Periodic** — Fire repeatedly at interval (with drift correction)
 
 ### Timer Interface
 
 ```rust
-pub struct Timer {
-    id: TimerId,
-    process_id: ProcessId,
-    scheduled_at: Instant,
-    message: Box<dyn Any + Send>,
+pub struct TimerService {
+    timers: Arc<Mutex<Vec<TimerEntry>>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
 }
 
-impl Timer {
-    pub fn after(duration: Duration, message: impl Into<Box<dyn Any + Send>>) -> Self;
-    pub fn at(time: Instant, message: impl Into<Box<dyn Any + Send>>) -> Self;
-    pub fn every(interval: Duration, message: impl Into<Box<dyn Any + Send>>) -> Self;
+pub struct TimerHandle {
+    timers: Arc<Mutex<Vec<TimerEntry>>>,
+}
+
+impl TimerHandle {
+    pub fn schedule_timer<M: Send + 'static>(&self, duration: Duration, actor_id: ActorId, message: M) -> TimerId;
+    pub fn schedule_interval<M: Clone + Send + Sync + 'static>(&self, interval: Duration, actor_id: ActorId, message: M) -> TimerId;
+    pub fn cancel_timer(&self, timer_id: TimerId);
 }
 ```
+
+### Drift Correction
+
+Periodic timers use scheduled-at-based rescheduling:
+
+```rust
+// Reschedule based on previous scheduled time
+scheduled_at: entry_scheduled_at + interval
+```
+
+This prevents drift accumulation.
 
 ## Cancellation
 
 Cooperative cancellation via tokens.
 
-### CancellationToken
+### CancellationToken (via ComputeHandle)
 
 ```rust
-pub struct CancellationToken {
-    inner: Arc<AtomicBool>,
+pub fn cancel(&self) {
+    self.cancelled.store(true, Ordering::Relaxed);
 }
 
-impl CancellationToken {
-    pub fn new() -> Self;
-    pub fn cancel(&self);
-    pub fn is_cancelled(&self) -> bool;
+pub fn is_cancelled(&self) -> bool {
+    self.cancelled.load(Ordering::Relaxed)
 }
 ```
 
-### Usage
-
-```rust
-fn my_process(context: &mut ProcessContext) {
-    loop {
-        if context.cancellation_token().is_cancelled() {
-            break;
-        }
-        if let Some(msg) = context.receive() {
-            handle_message(msg);
-        }
-    }
-}
-```
+The compute worker checks the flag before and after execution. If set before, the task is skipped. If set after, the result is discarded.
 
 ## Runtime
 
-Top-level coordinator that owns all processes.
+Top-level coordinator that owns all components.
 
 ### Runtime Interface
 
 ```rust
 pub struct Runtime {
     scheduler: Scheduler,
-    processes: HashMap<ProcessId, ProcessHandle>,
-    supervisors: HashMap<ProcessId, SupervisorHandle>,
+    compute: ComputeScheduler,
+    timers: TimerService,
+    actors: Arc<RwLock<HashMap<ActorId, ActorInfo>>>,
+    senders: Arc<RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>>,
+    request_counter: AtomicU64,
+    stop: Arc<AtomicBool>,
+    mailbox_capacity: usize,
+    shutdown_timeout: Duration,
 }
 
 impl Runtime {
-    pub fn new() -> Self;
-    pub fn spawn<P: Process>(&self, process: P) -> ProcessRef;
-    pub fn spawn_supervisor(&self, config: SupervisorConfig) -> ProcessRef;
-    pub fn list_processes(&self) -> Vec<ProcessInfo>;
-    pub fn inspect_process(&self, id: ProcessId) -> Option<ProcessInfo>;
-    pub fn shutdown(&self) -> ShutdownHandle;
+    pub fn new() -> Result<Self, RuntimeError>;
+    pub fn with_config(config: RuntimeConfig) -> Result<Self, RuntimeError>;
+    pub fn spawn<A: Actor>(&mut self, actor: A) -> Result<ActorId, RuntimeError>;
+    pub fn send<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError>;
+    pub fn send_blocking<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError>;
+    pub fn request<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<RequestHandle, RuntimeError>;
+    pub fn request_blocking<M: Send + 'static, R: Send + 'static>(&self, target: ActorId, message: M, timeout: Option<Duration>) -> Result<R, RuntimeError>;
+    pub fn spawn_supervisor(&self, strategy: RestartStrategy, children: Vec<ChildSpec>) -> Result<ActorId, RuntimeError>;
+    pub fn list_actors(&self) -> Result<Vec<ActorInfo>, RuntimeError>;
+    pub fn inspect_actor(&self, id: ActorId) -> Result<Option<ActorInfo>, RuntimeError>;
+    pub fn compute(&self) -> &ComputeScheduler;
+    pub fn schedule_timer<M: Send + 'static>(&self, duration: Duration, target: ActorId, message: M) -> TimerId;
+    pub fn schedule_interval<M: Clone + Send + Sync + 'static>(&self, interval: Duration, target: ActorId, message: M) -> TimerId;
+    pub fn cancel_timer(&self, timer_id: TimerId);
+    pub fn stats(&self) -> RuntimeStats;
+    pub fn shutdown(&mut self) -> Result<(), RuntimeError>;
+}
+```
+
+### RequestHandle
+
+```rust
+pub struct RequestHandle {
+    id: u64,
+    receiver: crossbeam_channel::Receiver<Box<dyn std::any::Any + Send>>,
+}
+
+impl RequestHandle {
+    pub fn id(&self) -> u64;
+    pub fn recv(self) -> Result<Box<dyn std::any::Any + Send>, RuntimeError>;
+    pub fn try_recv(&self) -> Result<Box<dyn std::any::Any + Send>, RuntimeError>;
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<Box<dyn std::any::Any + Send>, RuntimeError>;
+}
+```
+
+### RuntimeConfig
+
+```rust
+pub struct RuntimeConfig {
+    pub compute: ComputeConfig,
+    pub mailbox_capacity: usize,       // Default: 1000
+    pub shutdown_timeout: Duration,   // Default: 5 seconds
+}
+```
+
+### RuntimeStats
+
+```rust
+pub struct RuntimeStats {
+    pub actor_count: usize,
+    pub request_count: u64,
 }
 ```
 
@@ -467,63 +464,32 @@ impl Runtime {
 
 Graceful shutdown:
 
-1. Stop accepting new messages
-2. Wait for in-flight messages to complete
-3. Notify processes of shutdown
-4. Wait for processes to stop (with timeout)
-5. Force-kill remaining processes
+1. Sets the stop flag (actors stop accepting new messages and drain remaining)
+2. Waits up to `shutdown_timeout` for actors to finish
+3. Clears all internal state
+4. Shuts down scheduler, timers, and compute pool
 
 ```rust
-pub struct ShutdownConfig {
-    pub timeout: Duration,
-    pub force_after: bool,
-}
-
-impl Runtime {
-    pub fn shutdown(&self, config: ShutdownConfig);
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
 }
 ```
 
 ## Supervisor
 
-Manages child process lifecycle and restart policies.
+Manages child actor lifecycle and restart policies.
 
-### Restart Strategies
-
-**one-for-one** (initial implementation):
-
-```
-Child crashes → Supervisor restarts that child
-```
-
-**one-for-all** (later):
-
-```
-Child crashes → All children restart
-```
-
-**rest-for-one** (later):
-
-```
-Child crashes → That child and all children started after it restart
-```
-
-### Supervisor Interface
+### Restart Strategy
 
 ```rust
-pub struct Supervisor {
-    id: ProcessId,
-    strategy: RestartStrategy,
-    children: Vec<ChildSpec>,
-    restart_count: HashMap<ProcessId, usize>,
-    backoff: BackoffConfig,
-}
-
-impl Supervisor {
-    pub fn new(strategy: RestartStrategy) -> Self;
-    pub fn child(&mut self, spec: ChildSpec) -> &mut Self;
-    pub fn start(&mut self) -> Result<(), SupervisorError>;
-    pub fn handle_child_failure(&mut self, child_id: ProcessId) -> Result<(), SupervisorError>;
+pub enum RestartStrategy {
+    OneForOne {
+        max_restarts: usize,
+        within: Duration,
+        base_backoff: Duration,
+    },
 }
 ```
 
@@ -532,108 +498,23 @@ impl Supervisor {
 ```rust
 pub struct ChildSpec {
     pub name: String,
-    pub process_type: ProcessType,
     pub restart_policy: RestartPolicy,
     pub shutdown_timeout: Duration,
 }
 
 pub enum RestartPolicy {
-    Permanent,  // Always restart
-    Temporary,  // Never restart
-    Transient,  // Restart only on abnormal exit
-}
-```
-
-### Backoff
-
-Prevent infinite restart loops.
-
-```rust
-pub struct BackoffConfig {
-    pub initial_delay: Duration,
-    pub max_delay: Duration,
-    pub multiplier: f64,
-    pub max_restarts: usize,
-    pub within: Duration,  // Reset counter after this period
-}
-```
-
-### Crash Reporting
-
-When a child crashes, the supervisor:
-
-1. Logs the crash with full context
-2. Updates restart counters
-3. Applies backoff if needed
-4. Restarts the child
-5. Escalates if restart limit exceeded
-
-## Process Monitoring
-
-Separate from supervision. Monitoring is observation, not ownership.
-
-### Monitor
-
-```rust
-pub struct Monitor {
-    watcher: ProcessId,
-    watched: ProcessId,
-    notification: oneshot::Sender<ProcessEvent>,
-}
-
-pub enum ProcessEvent {
-    Stopped(ProcessId),
-    Failed(ProcessId, ProcessError),
-}
-```
-
-### Usage
-
-```rust
-let monitor = runtime.monitor(watcher_id, watched_id);
-match monitor.await {
-    Ok(event) => handle_event(event),
-    Err(_) => timeout,
-}
-```
-
-## Observability
-
-### Structured Tracing
-
-Every important operation should include:
-
-```rust
-pub struct SpanContext {
-    pub timestamp: Instant,
-    pub process_id: ProcessId,
-    pub parent_process_id: Option<ProcessId>,
-    pub correlation_id: Option<CorrelationId>,
-    pub operation: String,
-    pub duration: Option<Duration>,
-    pub result: Option<String>,
-    pub error: Option<String>,
-}
-```
-
-### Metrics
-
-```rust
-pub struct RuntimeMetrics {
-    pub process_count: usize,
-    pub mailbox_depth: HashMap<ProcessId, usize>,
-    pub message_rate: f64,
-    pub message_latency: Duration,
-    pub restart_count: usize,
+    Permanent,   // Always restart
+    Temporary,   // Never restart
+    Transient,   // Restart only on abnormal exit
 }
 ```
 
 ## Exit Criterion
 
-Phase 1 is complete when:
+Phase 1 (v1.0.0) is complete when:
 
-- 100K+ test processes communicate reliably
-- Process creation is lightweight
+- 100K+ concurrent actors communicate reliably
+- Actor creation is lightweight
 - Message delivery is reliable
 - Work stealing across cores
 - No starvation (reduction counting works)

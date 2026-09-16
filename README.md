@@ -5,7 +5,7 @@ A Rust-native actor runtime combining BEAM-style lightweight processes, messagin
 ## Features
 
 - **Actor trait** — synchronous `fn handle(&mut self, msg, ctx)` with typed messages
-- **Work-stealing scheduler** — per-worker run queues, cooperative yield via reduction counting
+- **Work-stealing scheduler** — per-worker `RunQueue`, steal-half protocol, reduction-based cooperative yield
 - **Request-reply** — `Runtime::request()` with `RequestHandle::recv()`/`try_recv()`/`recv_timeout()`
 - **Supervision** — `RestartStrategy::OneForOne` with exponential backoff
 - **Compute pool** — offload CPU-intensive work to a thread pool with panic isolation and cancellation
@@ -37,17 +37,25 @@ runtime.send(id, "world".to_string()).unwrap();
 
 ## Documentation
 
-- [Getting Started](docs/guides/getting-started.md)
-- [Supervision](docs/guides/supervision.md)
-- [Compute](docs/guides/compute.md)
-- [Timers](docs/guides/timers.md)
-- [Resources](docs/guides/resources.md)
-- [Actor Communication Principles](docs/actor-communication.md)
+- [Architecture](docs/architecture.md) — Full architectural document with runtime model, invariants, and development order
+- [Vision](docs/vision.md) — Design priorities and long-term evolution
+- [Getting Started](docs/guides/getting-started.md) — Walkthrough of core APIs
+- [Supervision](docs/guides/supervision.md) — Supervision trees and restart strategies
+- [Compute](docs/guides/compute.md) — CPU-intensive work offloading
+- [Timers](docs/guides/timers.md) — One-shot and periodic timers
+- [Resources](docs/guides/resources.md) — Capability-based resource management
+- [Actor Communication Principles](docs/actor-communication.md) — 24 principles for message flow and invariants
+- [Scheduler](docs/scheduler.md) — BEAM-style scheduler with work stealing
+- [Runtime API](docs/runtime.md) — Top-level Runtime API reference
+- [Actors](docs/actors.md) — Actor trait, ActorId, ActorContext, ownership model
+- [Security](docs/security.md) — Capability-based security model
+- [Object Model](docs/object-model.md) — Core runtime types reference
+- [Protocol](docs/protocol.md) — Message envelope and request/reply protocol
 - [API Reference](https://docs.rs/runact)
 
 ## MSRV
 
-Rust 1.80 (last 3 stable releases policy).
+Rust 1.85 (edition 2024).
 
 ## License
 

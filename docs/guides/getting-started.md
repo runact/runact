@@ -2,12 +2,12 @@
 
 ## Overview
 
-This guide walks through the core Runact workflow: spawning actors, sending messages, and handling replies.
+This guide walks through the core Runact workflow: spawning actors, sending messages, handling replies, supervision, compute, timers, and resources.
 
 ## Spawning an Actor
 
 ```rust
-use runact::{Actor, ActorId, ActorContext, ActorError, Runtime};
+use runact::{Actor, ActorContext, ActorError, Runtime};
 
 struct Greeter;
 
@@ -48,7 +48,8 @@ runtime.send_blocking(id, "world".to_string()).unwrap();
 
 ```rust
 let handle = runtime.request(id, "what is your name?".to_string()).unwrap();
-let reply: String = handle.recv().unwrap();
+let reply: Box<dyn std::any::Any + Send> = handle.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+let name = *reply.downcast::<String>().unwrap();
 ```
 
 The actor replies via `ctx.reply(...)`:
@@ -71,7 +72,7 @@ impl Actor for Greeter {
 | Method | Behavior |
 |--------|----------|
 | `recv()` | Block until reply arrives |
-| `try_recv()` | Return immediately — `Some(result)` or `None` |
+| `try_recv()` | Return immediately — `Ok` or `Err` |
 | `recv_timeout(dur)` | Block up to `dur`, then return error |
 
 ## Actor-to-Actor Messaging
@@ -91,6 +92,99 @@ impl Actor for Forwarder {
         Ok(())
     }
 }
+```
+
+## Supervision
+
+```rust
+use runact::{Actor, ActorContext, ActorError, Runtime, RestartStrategy, ChildSpec, RestartPolicy};
+
+let strategy = RestartStrategy::OneForOne {
+    max_restarts: 5,
+    within: std::time::Duration::from_secs(60),
+    base_backoff: std::time::Duration::from_millis(100),
+};
+
+let children = vec![
+    ChildSpec::new("worker-1")
+        .restart_policy(RestartPolicy::Permanent),
+];
+
+let supervisor_id = runtime.spawn_supervisor(strategy, children).unwrap();
+```
+
+## Compute Pool
+
+Offload CPU-intensive work:
+
+```rust
+struct DataProcessor {
+    pending: Option<runact::ComputeHandle<Vec<u8>>>,
+}
+
+impl Actor for DataProcessor {
+    type Message = DataMsg;
+
+    fn handle(&mut self, msg: DataMsg, ctx: &mut ActorContext) -> Result<(), ActorError> {
+        match msg {
+            DataMsg::Process(data) => {
+                let handle = ctx.spawn_compute(move || {
+                    data.iter().map(|b| b.wrapping_add(1)).collect()
+                })?;
+                self.pending = Some(handle);
+            }
+            DataMsg::CheckResult => {
+                if let Some(ref handle) = self.pending {
+                    if let Some(result) = handle.try_recv() {
+                        // handle result
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+## Timers
+
+```rust
+use std::time::Duration;
+
+// From outside an actor:
+runtime.schedule_timer(Duration::from_secs(5), actor_id, "wake up".to_string());
+
+// From inside an actor:
+ctx.schedule_timer(Duration::from_millis(500), "ping".to_string())?;
+
+// Periodic:
+ctx.schedule_interval(Duration::from_secs(1), Tick)?;
+```
+
+Cancel a timer:
+
+```rust
+let timer_id = ctx.schedule_timer(Duration::from_secs(10), "delayed").unwrap();
+ctx.cancel_timer(timer_id);
+```
+
+## Resources
+
+```rust
+use runact::{ResourceHandle, Capability, ResourceRegistry};
+use std::any::Any;
+
+#[derive(Debug)]
+struct DatabaseConnection {
+    url: String,
+}
+
+impl ResourceHandle for DatabaseConnection {
+    fn resource_type(&self) -> &str { "DatabaseConnection" }
+    fn as_any(&self) -> &dyn Any { self }
+}
+
+let cap = Capability::new(actor_id, DatabaseConnection { url: "postgres://localhost/mydb".to_string() });
 ```
 
 ## Shutdown
@@ -137,7 +231,7 @@ All actor lifecycle events are logged via `tracing`:
 ## Complete Example
 
 ```rust
-use runact::{Actor, ActorId, ActorContext, ActorError, Runtime};
+use runact::{Actor, ActorContext, ActorError, Runtime};
 
 struct Counter {
     value: i64,
@@ -173,7 +267,8 @@ fn main() {
     runtime.send(id, CounterMsg::Decrement).unwrap();
 
     let handle = runtime.request(id, CounterMsg::GetValue).unwrap();
-    let value: i64 = handle.recv().unwrap();
-    assert_eq!(value, 1);
+    let reply = handle.recv_timeout(std::time::Duration::from_secs(1)).unwrap();
+    let value = reply.downcast::<i64>().unwrap();
+    assert_eq!(*value, 1);
 }
 ```

@@ -8,12 +8,16 @@ The compute scheduler offloads CPU-intensive work to a thread pool, keeping the 
 
 ```rust
 use runact::{Actor, ActorContext, ActorError, ComputeHandle};
+use std::time::Duration;
 
-struct DataProcessor;
+struct DataProcessor {
+    pending: Option<ComputeHandle<Vec<u8>>>,
+}
 
 enum DataMsg {
     Process(Vec<u8>),
-    ProcessResult(ComputeHandle<Vec<u8>>),
+    CheckResult,
+    GetResult,
 }
 
 impl Actor for DataProcessor {
@@ -23,17 +27,33 @@ impl Actor for DataProcessor {
         match msg {
             DataMsg::Process(data) => {
                 let handle = ctx.spawn_compute(move || {
-                    // CPU-intensive work here
+                    // CPU-intensive work here — runs on compute pool, not actor worker
                     data.iter().map(|b| b.wrapping_add(1)).collect()
-                })?;
-                // Store handle and poll on next message
-                ctx.send_to(ctx.actor_id(), DataMsg::ProcessResult(handle))?;
+                }).expect("Failed to submit compute task");
+                self.pending = Some(handle);
             }
-            DataMsg::ProcessResult(handle) => {
-                match handle.try_recv() {
-                    Some(Ok(result)) => println!("Processed: {} bytes", result.len()),
-                    Some(Err(e)) => eprintln!("Compute failed: {:?}", e),
-                    None => {} // Still running
+            DataMsg::CheckResult => {
+                if let Some(ref handle) = self.pending {
+                    if let Some(result) = handle.try_recv() {
+                        match result {
+                            Ok(value) => println!("Processed: {} bytes", value.len()),
+                            Err(e) => eprintln!("Compute failed: {:?}", e),
+                            None => {} // Still running
+                        }
+                    }
+                }
+            }
+            DataMsg::GetResult => {
+                if let Some(ref handle) = self.pending {
+                    match handle.recv_timeout(Duration::from_secs(1)) {
+                        Ok(value) => {
+                            ctx.reply(value).ok();
+                            self.pending = None;
+                        }
+                        Err(e) => {
+                            ctx.reply(e).ok();
+                        }
+                    }
                 }
             }
         }
@@ -56,7 +76,7 @@ let result = handle.recv().unwrap();
 
 | Method | Behavior |
 |--------|----------|
-| `try_recv()` | Non-blocking poll — `Some(Ok(T))`, `Some(Err)`, or `None` |
+| `try_recv()` | Non-blocking poll — `Some(Ok(T))`, `Some(Err)`, or `None` if still running |
 | `recv()` | Block until result arrives |
 | `recv_timeout(dur)` | Block up to timeout |
 | `cancel()` | Request cancellation (checked before/after execution) |
@@ -67,7 +87,7 @@ let result = handle.recv().unwrap();
 ```rust
 let handle = ctx.spawn_compute(|| {
     long_running_task()
-})?;
+}).unwrap();
 
 // Later, if we no longer need the result:
 handle.cancel();
@@ -78,6 +98,19 @@ The worker checks the cancellation flag before and after execution. If set befor
 ## Panic Isolation
 
 Panics inside compute tasks are caught and surfaced as `ComputeError::WorkerPanic(msg)`. The worker thread survives and continues processing tasks.
+
+```rust
+let handle = runtime.compute().spawn(|| -> String {
+    panic!("Compute task panicked!");
+});
+
+match handle.recv() {
+    Err(runact::ComputeError::WorkerPanic(msg)) => {
+        // Panic was caught, msg contains the panic message
+    }
+    _ => { /* ... */ }
+}
+```
 
 ## Configuration
 
@@ -96,6 +129,7 @@ let config = RuntimeConfig {
 
 ## When to Use Compute
 
-- **Use compute** for CPU-intensive work: parsing, encryption, compression, data transformation
-- **Don't use compute** for I/O-bound work (use timers instead) or for work that needs actor state
+- **Use compute** for CPU-intensive work: parsing, encryption, compression, data transformation, mathematical computation
+- **Don't use compute** for I/O-bound work (use timers instead) or for work that needs actor state — do that directly in the handler
 - **Don't block** inside actors — submit to compute and poll the handle later
+- **Always check cancellation** — the worker checks the flag before and after execution

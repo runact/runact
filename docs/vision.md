@@ -47,7 +47,7 @@ Applications are clients of the runtime. Examples:
 - Automation workflows
 - Remote services
 
-```
+```text
                 RUNACT RUNTIME
                       │
           ┌───────────┼───────────┐
@@ -60,7 +60,7 @@ Applications are clients of the runtime. Examples:
                       │
        ┌──────────────┼──────────────┐
        │              │              │
-   Processes     Messages       Supervisors
+   Actors       Messages       Supervisors
        │              │              │
        └──────────────┼──────────────┘
                       │
@@ -69,12 +69,16 @@ Applications are clients of the runtime. Examples:
 
 ## What Runact Provides
 
-- Lightweight processes with stable identities
-- Typed message passing
-- Supervision trees with restart policies
-- Timers and cancellation
-- Capability-based security
-- Observable operations
+- Lightweight actors with stable `ActorId` identities
+- Typed message passing with ownership transfer
+- Bounded mailboxes with explicit backpressure (`MailboxFull` error)
+- Supervision trees with `OneForOne` restart strategy and exponential backoff
+- Timers (one-shot and periodic with drift correction)
+- Cancellation (cooperative, via `ComputeHandle::cancel`)
+- Dedicated compute pool for CPU-intensive work with panic isolation
+- Capability-based resource management (`Capability`, `ResourceHandle`, `ResourceRegistry`)
+- Observability via `tracing` (lifecycle events, restarts, crashes)
+- Runtime statistics (`RuntimeStats`, `ActorInfo`)
 
 ## What Runact Does NOT Provide
 
@@ -88,25 +92,25 @@ Applications are clients of the runtime. Examples:
 
 These are **application concerns**, not runtime concerns.
 
-An application built on Runact would implement these as processes.
+An application built on Runact would implement these as actors.
 
 ## Success Criteria
 
 Runact v1 is complete when:
 
-- Process failures are isolated
-- Supervisors reliably restart services
-- Thousands of processes run efficiently
-- Message passing is fast and reliable
-- Timers fire correctly
-- Cancellation works
-- Shutdown is graceful
-- APIs are stable and documented
-- Runtime internals are not leaked
+- Process failures are isolated (compute task panics caught)
+- Supervisors reliably restart services (via `SupervisorActor`)
+- Thousands of actors run efficiently (benchmarks: 100K actors)
+- Message passing is fast and reliable (request-reply latency benchmarks)
+- Timers fire correctly (one-shot and periodic)
+- Cancellation works (`ComputeHandle::cancel`)
+- Shutdown is graceful (`Runtime::shutdown` with configurable timeout)
+- APIs are stable and documented (all public types have rustdoc)
+- Runtime internals are not leaked (no `crossbeam` types in public APIs)
 
 ## Long-Term Evolution
 
-```
+```text
 minimal actor runtime
         ↓
 workspace runtime
@@ -130,7 +134,7 @@ Build that runtime. Then let real applications determine evolution.
 
 The long-term asset is not features. It is the stability of the underlying model:
 
-- Processes
+- Actors (processes)
 - Messages
 - Supervision
 - Timers

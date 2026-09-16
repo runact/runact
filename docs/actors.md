@@ -30,39 +30,61 @@ pub trait Actor: Send + 'static {
 
 ### Why Synchronous?
 
-Rust code cannot safely be arbitrarily preempted at any instruction boundary. Runact uses cooperative scheduling at safe execution boundaries.
+Rust code cannot safely be arbitrarily preempted at any instruction boundary. Runact uses cooperative scheduling at safe execution boundaries. The handler processes one message and returns; the scheduler decides whether to continue with the next message or yield.
 
 ## ActorId
 
 Stable, unique identifier for an actor.
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ActorId(u64);
 ```
 
 - Created at spawn time
 - Never reused within a runtime instance
-- Serializable
+- Serializable (via `serde`)
 - Orderable (for debugging)
+
+```rust
+impl ActorId {
+    pub fn new(id: u64) -> Self;
+    pub fn as_u64(self) -> u64;
+}
+```
+
+Display format: `Actor(42)`.
 
 ## ActorContext
 
-Provided to actor handlers.
+Provided to actor handlers. Gives the actor access to:
 
 ```rust
 pub struct ActorContext {
     actor_id: ActorId,
-    sender: MessageSender,
+    _sender: crossbeam_channel::Sender<MessageEnvelope>,
+    senders: Option<SenderMap>,
+    reply_sender: Option<ReplySender>,
+    compute_sender: Option<crossbeam_channel::Sender<Task>>,
+    timer_handle: Option<TimerHandle>,
 }
 ```
 
 ### Capabilities
 
-- Send messages to other actors
-- Access own ActorId
-- (Future) Schedule timers
-- (Future) Spawn child actors
+- `actor_id()` — Get the actor's own ID
+- `send_to(target, message)` — Send a fire-and-forget message to another actor
+- `reply(message)` — Reply to the sender of a request (no-op for fire-and-forget)
+- `is_request()` — Check if the current message was sent as a request
+- `spawn_compute(job)` — Submit a CPU-intensive task to the compute pool
+- `schedule_timer(duration, message)` — Schedule a one-shot timer
+- `schedule_interval(interval, message)` — Schedule a periodic timer
+- `cancel_timer(timer_id)` — Cancel a previously scheduled timer
+
+### External vs Internal Messaging
+
+- **Actor-to-actor**: Use `ctx.send_to(target, msg)` (non-blocking, bounded mailbox)
+- **External-to-actor**: Use `runtime.send(actor_id, msg)` (non-blocking) or `runtime.send_blocking(actor_id, msg)` (blocking)
 
 ## Actor Lifecycle
 
@@ -83,6 +105,12 @@ spawned → running → stopping → stopped
 - **terminated** — Actor was forcibly stopped
 - **failed** — Actor crashed or returned error
 - **restarting** — Supervisor is restarting the actor
+
+The runtime logs lifecycle events via `tracing`:
+
+- `info` — actor spawned, actor stopped
+- `warn` — actor restarted (via supervisor)
+- `error` — max restarts exceeded
 
 ## Ownership Model
 
@@ -115,16 +143,16 @@ impl Actor for BufferActor {
 
 ```rust
 // Sender: ownership moves into channel
-actor.send(BufferMessage::Insert("hello".to_string()));
+runtime.send(actor_id, BufferMessage::Insert("hello".to_string())).unwrap();
 
-// Receiver: ownership moves out of channel
-let msg = receiver.recv();  // msg owns the data
+// Actor-to-actor: ownership moves via message
+ctx.send_to(target, BufferMessage::Insert("hello".to_string())).unwrap();
 ```
 
-### No Shared Mutable State
+### No Shared Mutable State (as the default model)
 
 ```rust
-// ❌ FORBIDDEN by design
+// ❌ FORBIDDEN as the fundamental model
 let shared_state = Arc::Mutex::new(0);
 let state1 = shared_state.clone();
 let state2 = shared_state.clone();
@@ -134,6 +162,44 @@ let state2 = shared_state.clone();
 // Communication via messages only
 ```
 
+Shared state (`Arc<Mutex<T>>`, `RwLock<T>`, `Atomic<T>`) remains possible when genuinely required, but it is not the fundamental programming model.
+
+## Request/Reply
+
+Actors can send requests and receive replies via `Runtime::request`:
+
+```rust
+let handle = runtime.request(actor_id, GetValue)?;
+let reply: Box<dyn Any + Send> = handle.recv()?;
+```
+
+Inside an actor, reply using `ctx.reply`:
+
+```rust
+impl Actor for Counter {
+    type Message = CounterMessage;
+
+    fn handle(&mut self, msg: CounterMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
+        match msg {
+            CounterMessage::GetValue => {
+                ctx.reply(self.count)?;
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+### RequestHandle Methods
+
+| Method | Behavior |
+|--------|----------|
+| `recv()` | Block until reply arrives |
+| `try_recv()` | Return immediately — `Ok` or `Err` |
+| `recv_timeout(dur)` | Block up to `dur`, then return error |
+
+The reply channel is bounded (capacity 1) to prevent uncontrolled memory growth.
+
 ## Message Design
 
 ### Good Messages
@@ -142,20 +208,9 @@ let state2 = shared_state.clone();
 // Simple, clear, ownership-transferable
 enum BufferMessage {
     Insert(String),
-    Delete(Range),
+    Delete(Range<usize>),
     Save,
     GetSnapshot,
-}
-
-// Request-response pattern
-enum Request {
-    GetData,
-    GetStatus,
-}
-
-enum Response {
-    Data(String),
-    Status(StatusInfo),
 }
 ```
 
@@ -168,9 +223,9 @@ enum BadMessage {
     Process(&[u8]),  // Lifetime issues
 }
 
-// ❌ Cloning everything
+// ❌ Requiring shared mutable state
 enum BadMessage {
-    GetData(String),  // Forces cloning
+    GetData(Arc<Mutex<Data>>),  // Defeats the actor model
 }
 ```
 
@@ -201,8 +256,7 @@ impl Actor for CounterActor {
                 self.count = self.count.saturating_sub(1);
             }
             CounterMessage::GetValue => {
-                // Send response back
-                ctx.send(Box::new(self.count))?;
+                ctx.reply(self.count)?;
             }
         }
         Ok(())
@@ -210,40 +264,89 @@ impl Actor for CounterActor {
 }
 ```
 
-### Buffer Actor
+### Forwarder Actor (Actor-to-Actor Messaging)
 
 ```rust
-struct BufferActor {
-    content: String,
-    modified: bool,
+struct ForwardActor {
+    target: Option<ActorId>,
 }
 
-enum BufferMessage {
-    Insert { position: usize, text: String },
-    Delete { range: Range<usize> },
-    Save,
-    GetContent,
+enum ForwardMessage {
+    SetTarget(ActorId),
+    Forward(String),
 }
 
-impl Actor for BufferActor {
-    type Message = BufferMessage;
+impl Actor for ForwardActor {
+    type Message = ForwardMessage;
 
-    fn handle(&mut self, msg: BufferMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
+    fn handle(&mut self, msg: ForwardMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
         match msg {
-            BufferMessage::Insert { position, text } => {
-                self.content.insert_str(position, &text);
-                self.modified = true;
+            ForwardMessage::SetTarget(id) => {
+                self.target = Some(id);
             }
-            BufferMessage::Delete { range } => {
-                self.content.drain(range);
-                self.modified = true;
+            ForwardMessage::Forward(text) => {
+                if let Some(target) = self.target {
+                    ctx.send_to(target, LoggerMessage::Log(text))?;
+                }
             }
-            BufferMessage::Save => {
-                // Save to disk
-                self.modified = false;
+        }
+        Ok(())
+    }
+}
+```
+
+### Compute Actor (Offloading CPU Work)
+
+```rust
+struct DataProcessor {
+    pending: Option<ComputeHandle<Vec<u8>>>,
+}
+
+enum DataMsg {
+    Process(Vec<u8>),
+    CheckResult,
+    GetResult,
+}
+
+impl Actor for DataProcessor {
+    type Message = DataMsg;
+
+    fn handle(&mut self, msg: DataMsg, ctx: &mut ActorContext) -> Result<(), ActorError> {
+        match msg {
+            DataMsg::Process(data) => {
+                let handle = ctx.spawn_compute(move || {
+                    // CPU-intensive work on compute pool
+                    data.iter().map(|b| b.wrapping_add(1)).collect()
+                })?;
+                self.pending = Some(handle);
             }
-            BufferMessage::GetContent => {
-                ctx.send(Box::new(self.content.clone()))?;
+            DataMsg::CheckResult => {
+                if let Some(ref handle) = self.pending {
+                    if let Some(result) = handle.try_recv() {
+                        match result {
+                            Ok(value) => {
+                                ctx.reply(value)?;
+                                self.pending = None;
+                            }
+                            Err(e) => {
+                                ctx.reply(ComputeError::WorkerPanic(e.to_string()))?;
+                            }
+                        }
+                    }
+                }
+            }
+            DataMsg::GetResult => {
+                if let Some(ref handle) = self.pending {
+                    match handle.recv_timeout(Duration::from_secs(1)) {
+                        Ok(value) => {
+                            ctx.reply(value)?;
+                            self.pending = None;
+                        }
+                        Err(e) => {
+                            ctx.reply(e)?;
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -254,8 +357,12 @@ impl Actor for BufferActor {
 ## Best Practices
 
 1. **Keep messages simple** — Easy to understand, easy to handle
-2. **Transfer ownership** — Don't share references
+2. **Transfer ownership** — Don't share references in messages
 3. **One message, one action** — Each message should do one thing
 4. **Handle all cases** — Use exhaustive matching
-5. **Don't block** — Process message and yield back
-6. **Design for failure** — What happens if handler panics?
+5. **Don't block** — Process message and yield back to the scheduler
+6. **Use compute pool for CPU work** — Never do long-running computation in an actor handler
+7. **Design for failure** — What happens if handler panics? (Compute tasks are isolated; actor panics are surfaced to supervisors.)
+8. **Use timers for delays** — Don't `thread::sleep` inside actors
+9. **Reply to requests** — If `ctx.is_request()`, consider replying
+10. **Cancel timers you no longer need** — Prevents stale message delivery

@@ -42,7 +42,7 @@ The message must implement `Clone + Send + Sync` because it is cloned for each t
 
 ## Drift Correction
 
-Periodic timers use **scheduled-at-based rescheduling** to avoid drift:
+Periodic timers use scheduled-at-based rescheduling to avoid drift:
 
 ```rust
 // Instead of: scheduled_at = now + interval  (drifts over time)
@@ -71,7 +71,7 @@ runtime.cancel_timer(timer_id);
 
 ## Handling Timer Messages
 
-Timer messages arrive as regular messages. Use an enum variant to distinguish them:
+Timer messages arrive as regular actor messages. Use an enum variant to distinguish them:
 
 ```rust
 enum AppMsg {
@@ -106,9 +106,20 @@ Each timer gets a unique `TimerId` that can be used for cancellation:
 pub struct TimerId(u64);
 ```
 
+## Timer Implementation
+
+Runact's timer service runs on a dedicated thread that polls scheduled timers every 1ms:
+
+- One-shot timers fire once, then are removed
+- Periodic timers fire at intervals, rescheduled based on previous scheduled time (drift correction)
+- Timer messages are sent directly to the actor's mailbox via `MessageEnvelope::Message`
+- Cancellation removes the timer entry from the timer list
+
 ## Best Practices
 
 1. **Use periodic timers for polling** — Check for updates, refresh UI, heartbeat
 2. **Use one-shot timers for delays** — Debouncing, timeouts, scheduled actions
 3. **Always cancel timers you no longer need** — Prevents stale message delivery
 4. **Clone messages must be cheap** — Use `Arc<str>` or small enums for periodic messages
+5. **Use actor-context timers for actor-owned timers** — `ctx.schedule_timer` / `ctx.schedule_interval`
+6. **Use runtime timers for external scheduling** — `runtime.schedule_timer` / `runtime.schedule_interval`

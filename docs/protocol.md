@@ -2,25 +2,24 @@
 
 ## Overview
 
-The Runact protocol defines how messages are structured, versioned, and transmitted between processes. It ensures interoperability between components and enables future evolution without breaking existing systems.
+The Runact protocol defines how messages are structured and transmitted between actors. In v1.0.0, the protocol is simple: messages are sent through `crossbeam-channel` bounded queues with ownership transfer. There is no separate wire format or serialization for local actor-to-actor communication.
 
-## Message Format
+This document describes the current v1.0.0 protocol and future directions.
+
+## Current Protocol (v1.0.0)
 
 ### MessageEnvelope
 
 Every message in Runact is wrapped in a `MessageEnvelope`:
 
 ```rust
-pub struct MessageEnvelope {
-    pub message_id: MessageId,
-    pub correlation_id: Option<CorrelationId>,
-    pub sender: ProcessId,
-    pub recipient: ProcessId,
-    pub protocol: ProtocolId,
-    pub version: ProtocolVersion,
-    pub priority: Priority,
-    pub timestamp: Timestamp,
-    pub payload: Vec<u8>,
+pub(crate) enum MessageEnvelope {
+    Message(Box<dyn std::any::Any + Send>),
+    Request {
+        _request_id: u64,
+        payload: Box<dyn std::any::Any + Send>,
+        reply_sender: crossbeam_channel::Sender<Box<dyn std::any::Any + Send>>,
+    },
 }
 ```
 
@@ -28,319 +27,184 @@ pub struct MessageEnvelope {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `message_id` | `MessageId` | Unique identifier for this message |
-| `correlation_id` | `Option<CorrelationId>` | Links request/response pairs |
-| `sender` | `ProcessId` | Originating process |
-| `recipient` | `ProcessId` | Target process |
-| `protocol` | `ProtocolId` | Identifies the message protocol |
-| `version` | `ProtocolVersion` | Version of the protocol |
-| `priority` | `Priority` | Message priority level |
-| `timestamp` | `Timestamp` | When the message was created |
-| `payload` | `Vec<u8>` | Serialized message data |
+| `Message` | `Box<dyn Any + Send>` | Fire-and-forget message |
+| `Request.payload` | `Box<dyn Any + Send>` | Request message |
+| `Request.reply_sender` | `crossbeam_channel::Sender` | Oneshot reply channel |
 
-## Protocol Identification
+### Message Types
 
-### ProtocolId
+| Type | Behavior |
+|------|----------|
+| `Message` | Fire-and-forget — no reply expected |
+| `Request` | Request/reply — includes reply channel |
 
-Identifies which protocol a message belongs to.
+### Sending
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ProtocolId(u32);
+// Fire-and-forget
+runtime.send(actor_id, message: M)?;
+
+// Actor-to-actor
+ctx.send_to(target, message: M)?;
+
+// Request/reply
+runtime.request(actor_id, message: M)?;
 ```
 
-### Built-in Protocols
+The `send` method uses `try_send` (non-blocking) and returns `RuntimeError::MailboxFull` if the bounded mailbox is full.
+
+---
+
+## Request/Response Pattern
+
+### Correlation ID
 
 ```rust
-impl ProtocolId {
-    pub const SYSTEM: Self = Self(0);
-    pub const WORKSPACE: Self = Self(1);
-    pub const BUFFER: Self = Self(2);
-    pub const COMMAND: Self = Self(3);
-    pub const EVENT: Self = Self(4);
-    pub const TRANSACTION: Self = Self(5);
-    pub const AGENT: Self = Self(6);
-    pub const EXTENSION: Self = Self(7);
+let request_id = self.request_counter.fetch_add(1, Ordering::Relaxed);
+```
+
+Each request gets a unique monotonically-increasing ID.
+
+### Reply Channel
+
+```rust
+let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+```
+
+A bounded channel with capacity 1 is used for the reply. This prevents unbounded memory growth.
+
+### RequestHandle
+
+```rust
+pub struct RequestHandle {
+    id: u64,
+    receiver: crossbeam_channel::Receiver<Box<dyn std::any::Any + Send>>,
 }
 ```
 
-### Custom Protocols
-
-Extensions define their own protocol IDs:
+### Usage
 
 ```rust
-impl ProtocolId {
-    pub fn custom(id: u32) -> Self {
-        assert!(id >= 1000, "Custom protocol IDs must be >= 1000");
-        Self(id)
+// External thread
+let handle = runtime.request(actor_id, GetValue)?;
+let reply = handle.recv_timeout(Duration::from_secs(5))?;
+let value = *reply.downcast::<i64>()?;
+
+// Inside actor handler
+fn handle(&mut self, msg: MyMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
+    if ctx.is_request() {
+        ctx.reply(self.value)?;
     }
+    Ok(())
 }
 ```
 
-## Versioning
+---
 
-### ProtocolVersion
+## Backpressure
 
-Semantic versioning for protocols.
+When a mailbox is full, the sender gets an explicit error:
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProtocolVersion {
-    pub major: u16,
-    pub minor: u16,
-    pub patch: u16,
+match runtime.send(actor_id, message) {
+    Err(RuntimeError::MailboxFull(id)) => {
+        // Mailbox is full — caller decides what to do
+    }
+    Ok(()) => { /* message accepted */ }
 }
 ```
 
-### Compatibility Rules
+No messages are silently dropped.
 
-- **Major version change** — Breaking changes. Not compatible.
-- **Minor version change** — New features. Backward compatible.
-- **Patch version change** — Bug fixes. Backward compatible.
-
-### Version Negotiation
-
-When processes communicate:
-
-1. Sender includes protocol version in message
-2. Receiver checks version compatibility
-3. If incompatible, receiver rejects message with error
-4. Error includes supported version range
+For external threads that can afford to block:
 
 ```rust
-pub enum ProtocolError {
-    VersionMismatch {
-        expected: ProtocolVersion,
-        received: ProtocolVersion,
-        supported_range: Range<ProtocolVersion>,
-    },
-    UnknownProtocol(ProtocolId),
-    InvalidPayload { protocol: ProtocolId, error: String },
-}
+runtime.send_blocking(actor_id, message)?;
 ```
 
-## Priority
+---
+
+## Future Protocol Extensions
 
 ### Priority Levels
 
+Planned:
+
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Priority {
-    Low = 0,
-    Normal = 1,
-    High = 2,
-    Critical = 3,
+    Low,
+    Normal,
+    High,
+    Critical,
 }
 ```
 
-### Priority Usage
+Mailbox would process Critical messages first, then High, Normal, Low (FIFO within priority).
 
-| Priority | Use Case |
-|----------|----------|
-| `Low` | Background tasks, logging |
-| `Normal` | Standard messages |
-| `High` | User-initiated actions |
-| `Critical` | System shutdown, crash handling |
+### Versioned Envelopes
 
-### Priority Handling
-
-- Mailbox processes Critical messages first
-- Then High, Normal, Low
-- Within same priority, FIFO order
-
-## Correlation
-
-### Request/Response Pattern
+Planned for distributed actors:
 
 ```rust
-// Sender creates correlation ID
-let correlation_id = CorrelationId::new();
-let request = MessageEnvelope {
-    correlation_id: Some(correlation_id),
-    // ...
-};
-
-// Sender sends request
-sender.send(request).await?;
-
-// Receiver processes and replies
-let response = MessageEnvelope {
-    correlation_id: Some(correlation_id),  // Same correlation ID
-    sender: receiver_id,
-    recipient: request.sender,
-    // ...
-};
-
-receiver.send_response(response).await?;
-```
-
-### Correlation Usage
-
-- Linking requests to responses
-- Tracing message chains
-- Debugging message flows
-- Implementing timeouts
-
-## Wire Format
-
-### Serialization
-
-Messages are serialized using a versioned binary format.
-
-```rust
-pub trait Codec: Send + Sync {
-    fn encode(&self, message: &dyn Any) -> Result<Vec<u8>, CodecError>;
-    fn decode(&self, data: &[u8]) -> Result<Box<dyn Any>, CodecError>;
-    fn protocol_id(&self) -> ProtocolId;
-    fn version(&self) -> ProtocolVersion;
-}
-```
-
-### Default Codec
-
-```rust
-pub struct BincodeCodec {
-    protocol_id: ProtocolId,
-    version: ProtocolVersion,
-}
-```
-
-### Extension Codecs
-
-Extensions can register custom codecs:
-
-```rust
-runtime.register_codec(MyCustomCodec::new());
-```
-
-## Message Flow
-
-### Direct Message
-
-```
-Process A → Mailbox B → Process B
-```
-
-### Request/Response
-
-```
-Process A → Mailbox B → Process B
-    ↑                      │
-    └──────────────────────┘
-```
-
-### Broadcast
-
-```
-Process A → Runtime → All Processes
-```
-
-### Dead Letter
-
-```
-Process A → Mailbox B (full) → Dead Letter Queue
-```
-
-## Dead Letters
-
-When a message cannot be delivered:
-
-1. Message is sent to dead letter queue
-2. Dead letter handler is notified
-3. Handler can log, retry, or discard
-
-```rust
-pub struct DeadLetter {
-    pub envelope: MessageEnvelope,
-    pub reason: DeadLetterReason,
-    pub timestamp: Timestamp,
-}
-
-pub enum DeadLetterReason {
-    MailboxFull,
-    ProcessNotFound,
-    ProcessStopped,
-    VersionMismatch,
-    InvalidPayload,
-}
-```
-
-## Extension Protocol
-
-### Extension Communication
-
-Extensions communicate through a versioned protocol.
-
-```rust
-pub struct ExtensionMessage {
-    pub extension_id: ExtensionId,
+pub struct MessageEnvelope {
     pub protocol: ProtocolId,
     pub version: ProtocolVersion,
+    pub priority: Priority,
+    pub correlation_id: Option<CorrelationId>,
+    pub timestamp: Instant,
     pub payload: Vec<u8>,
 }
 ```
 
-### Protocol Negotiation
+### Wire Format
 
-When an extension connects:
+Planned for extension processes and distributed runtime:
 
-1. Extension sends hello with protocol version
-2. Runtime checks compatibility
-3. Runtime responds with supported version
-4. Communication proceeds with negotiated version
+- Binary serialization (bincode-like)
+- Protocol versioning
+- Custom codecs for extensions
 
-```rust
-pub struct ExtensionHello {
-    pub extension_id: ExtensionId,
-    pub protocol_version: ProtocolVersion,
-    pub capabilities: Vec<Capability>,
-}
+These are future considerations. The v1.0.0 protocol is intentionally simple.
 
-pub struct ExtensionWelcome {
-    pub supported_version: ProtocolVersion,
-    pub granted_capabilities: Vec<Capability>,
-}
-```
+---
 
 ## Security Considerations
 
 ### Message Authentication
 
-- Messages include sender process ID
-- Runtime validates sender exists
-- Spoofed senders are rejected
-
-### Capability Checking
-
-- Messages requiring capabilities are checked
-- Unauthorized messages are rejected with error
+- Messages include the sending actor's identity (via `ActorId`)
+- The runtime validates that target actors exist
+- Spoofed sender IDs are not possible (the runtime assigns IDs)
 
 ### Rate Limiting
 
-- Mailboxes can enforce rate limits
-- Excessive messages are rejected
+- Bounded mailboxes provide implicit rate limiting
+- Compute pool queue capacity provides backpressure
+- Future: explicit per-actor rate limiting
 
-## Observability
+### Capability Checking
 
-### Message Tracing
+- Resource access is mediated by `Capability<H>` wrappers
+- Actors can only use capabilities they own or have been granted
+- Compute tasks are isolated — panics don't affect the actor
 
-Every message includes:
+---
 
-- `message_id` — Unique identifier
-- `correlation_id` — Links related messages
-- `timestamp` — When created
-- `sender` — Who sent it
-- `recipient` — Who receives it
+## Metrics
 
-### Metrics
+Current observability:
 
 ```rust
-pub struct ProtocolMetrics {
-    pub messages_sent: u64,
-    pub messages_received: u64,
-    pub messages_dropped: u64,
-    pub messages_rejected: u64,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
+pub struct RuntimeStats {
+    pub actor_count: usize,
+    pub request_count: u64,
 }
 ```
+
+Via `tracing`:
+
+- `info` — actor spawned, stopped
+- `debug` — message sent, request sent
+- `trace` — per-message handling
+- `warn` — actor restarted
+- `error` — max restarts exceeded
