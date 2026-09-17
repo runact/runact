@@ -4,11 +4,15 @@ This file refines the global workflow (see `~/.config/opencode/AGENTS.md`) for t
 
 ## Project Identity
 
-Runact is a **Rust-native actor runtime** (v1.0.0, edition 2024, MSRV 1.85) — BEAM-style lightweight processes, messaging, scheduling, supervision, with Rust's ownership model. Single crate, no workspace.
+Runact is a **Rust-native actor runtime** (v1.1.0, edition 2024, MSRV 1.85) — BEAM-style lightweight processes, messaging, scheduling, supervision, with Rust's ownership model. Single crate, no workspace.
 
-It is currently extending toward a **native async task system** (standard Rust `Future` execution on its own executor). See `docs/async-runtime.md` and `docs/adr/0003-native-async-runtime.md`.
+Runact is extending toward a **native async task system** (standard Rust `Future` execution on its own executor) and **TCP networking** for remote AI agents. See:
 
-> Runact owns concurrency and task lifecycle. Specialized libraries provide networking, HTTP, WebSocket, TLS, filesystem, and other I/O. **No Tokio in the core — ever.**
+- `docs/async-runtime.md` — Async runtime boundary document
+- `docs/adr/0003-native-async-runtime.md` — ADR for native Future executor
+- `docs/runtime-networking-plan.md` — Full plan for TCP, process runtime, cancellation, task groups, and remote AI agent support
+
+> Runact owns concurrency and task lifecycle. Specialized libraries provide HTTP, WebSocket, TLS, DNS, and application-level protocols. **No Tokio in the core — ever.**
 
 ## Repository Layout
 
@@ -22,14 +26,15 @@ src/
 ├── runtime.rs      # Runtime, RuntimeConfig, RuntimeStats, RequestHandle (private module)
 ├── scheduler/      # BEAM-style scheduler, work stealing, reductions (private)
 ├── supervision/    # Supervisor, ChildSpec, RestartStrategy (public via root re-export)
+├── task/           # Async task execution: TaskCell, Executor, TaskHandle, TaskError (public)
 ├── timer/          # Timer, TimerService (public)
 └── error.rs        # RuntimeError
 
 tests/              # Integration tests — one file per feature area (basic, compute,
-                    # observability, resource, scheduler, timer). These are the ACCEPTANCE
-                    # layer: behavioral, hitting real entry points (Runtime::new, spawn, send…)
+                    # observability, resource, scheduler, timer, async_executor).
+                    # These are the ACCEPTANCE layer: behavioral, hitting real entry points.
 benches/runact_bench.rs   # Criterion benchmarks (harness = false)
-docs/               # architecture.md, async-runtime.md, adr/, guides/, etc.
+docs/               # architecture.md, async-runtime.md, runtime-networking-plan.md, adr/, guides/, etc.
 ```
 
 ## Mandatory Workflow
@@ -53,8 +58,9 @@ docs/               # architecture.md, async-runtime.md, adr/, guides/, etc.
 - **No Tokio** in core dependencies. Specialized I/O libraries belong to applications, not the crate root.
 - **No type-error suppression** (`as any`/`unsafe`/`.unwrap()` in library code) — this is a `-D warnings` clippy/rustdoc gate anyway.
 - **Do not commit** unless explicitly asked.
-- **Update docs when behavior changes**: `docs/architecture.md` holds invariants; plan/design docs (`docs/async-runtime.md`, ADRs) are updated by decision, not afterthought. CHANGELOG follows Keep a Changelog.
+- **Update docs when behavior changes**: `docs/architecture.md` holds invariants; plan/design docs (`docs/async-runtime.md`, `docs/runtime-networking-plan.md`, ADRs) are updated by decision, not afterthought. CHANGELOG follows Keep a Changelog.
 - **Async runtime invariants** (from `docs/async-runtime.md` §22) are mandatory once the executor lands: pending tasks consume no worker time; CPU-heavy work never runs on async/actor workers; actors never block a worker waiting for I/O; task failure never terminates the runtime; cancellation is cooperative; shutdown deterministically terminates owned tasks; actors and async tasks remain fairly scheduled.
+- **Networking invariants** (from `docs/runtime-networking-plan.md` §30): Runact is NOT an HTTP/WebSocket/TLS/AI framework; TCP is the lowest-level network primitive; actors and async tasks remain distinct; structured concurrency prevents orphaned tasks; process cancellation prevents orphaned child processes; Tokio is optional, not fundamental.
 
 ## Conventions
 

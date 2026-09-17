@@ -1060,6 +1060,11 @@ Runact should not attempt to become:
 * a database
 * a distributed database
 * an application framework
+* an HTTP framework
+* a WebSocket framework
+* a TLS library
+* an AI framework
+* a shell/terminal framework
 
 Runact is the concurrency/runtime foundation.
 
@@ -1231,6 +1236,74 @@ Runtime semantics must remain understandable without knowing internal implementa
 
 The runtime must remain useful independently of PaperOS.
 
+### Invariant 11
+
+Runact is not an HTTP framework.
+
+### Invariant 12
+
+Runact is not a WebSocket framework.
+
+### Invariant 13
+
+Runact is not a TLS library.
+
+### Invariant 14
+
+Runact is not an AI framework.
+
+### Invariant 15
+
+Runact is not a shell/terminal framework.
+
+### Invariant 16
+
+Runact executes standard Rust futures.
+
+### Invariant 17
+
+Actors and async tasks remain distinct concepts.
+
+### Invariant 18
+
+CPU-heavy work uses the compute pool.
+
+### Invariant 19
+
+Async I/O never blocks an actor worker.
+
+### Invariant 20
+
+Cancellation is cooperative.
+
+### Invariant 21
+
+Structured concurrency prevents orphaned tasks.
+
+### Invariant 22
+
+Process cancellation prevents orphaned child processes.
+
+### Invariant 23
+
+TCP is the lowest-level network primitive in Runact.
+
+### Invariant 24
+
+HTTP/WebSocket remain outside Runact.
+
+### Invariant 25
+
+Tokio is optional, not fundamental.
+
+### Invariant 26
+
+Runact must remain useful independently of PaperOS.
+
+### Invariant 27
+
+PaperOS-specific concepts must not enter Runact core.
+
 ---
 
 ## 36. Development Order
@@ -1361,10 +1434,12 @@ runact/
 │   ├── agents.md
 │   ├── object-model.md
 │   ├── protocol.md
+│   ├── runtime-networking-plan.md  # Runtime + Networking extension plan
 │   ├── adr/
 │   │   ├── 0000-template.md
 │   │   ├── 0001-beam-style-scheduler.md
-│   │   └── 0002-dual-scheduler-architecture.md
+│   │   ├── 0002-dual-scheduler-architecture.md
+│   │   └── 0003-native-async-runtime.md
 │   └── guides/
 │       ├── getting-started.md
 │       ├── supervision.md
@@ -1378,6 +1453,7 @@ runact/
 │   ├── scheduler/
 │   ├── supervision/
 │   ├── compute/
+│   ├── task/           # Async task execution (v1.1.0)
 │   ├── timer/
 │   ├── resource/
 │   └── runtime.rs
@@ -1391,11 +1467,28 @@ runact/
     ├── observability.rs
     ├── resource.rs
     ├── scheduler.rs
-    └── timer.rs
+    ├── timer.rs
+    └── async_executor.rs
 ```
+
+### Future Crate Architecture (planned)
+
+When the runtime extends to networking and process management, the conceptual crate separation will be:
+
+```text
+runact/
+├── runact-core/      # actors, mailbox, scheduler, supervision
+├── runact-runtime/   # executor, tasks, wakers, cancellation, timers
+├── runact-compute/   # CPU-heavy work pool
+├── runact-net/       # TCP, reactor, readiness, sockets
+└── runact-process/   # process lifecycle, stdin/stdout/stderr
+```
+
+The exact crate boundaries may change during implementation, but the conceptual separation should remain.
 
 ## See Also
 
+- [Runtime + Networking Plan](runtime-networking-plan.md) — Full design document for extending Runact with TCP networking, process runtime, cancellation, task groups, and remote AI agent support
 - [Async Runtime](async-runtime.md) — Architectural boundary for the async task model: Runact schedules asynchronous work, I/O libraries define it (Future execution, task lifecycle, cancellation, timers, task groups, compute)
 - [ADR-0003: Native Async Runtime](adr/0003-native-async-runtime.md) — Rationale for a native Future executor without a Tokio core dependency
 - [Actor Communication Principles](actor-communication.md) — 24 principles governing message flow, request/reply, backpressure, cancellation, and the fundamental invariant: actors must never block scheduler workers.

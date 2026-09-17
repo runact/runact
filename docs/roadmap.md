@@ -147,6 +147,85 @@ Future work:
 
 ---
 
+## Phase 9 — Runtime + Networking Extension
+
+See [Runtime + Networking Plan](runtime-networking-plan.md) for the full design document.
+
+This phase extends Runact into a small, Rust-native concurrency runtime for PaperOS desktop applications, remote AI-agent servers, and async network services.
+
+### Core Principle
+
+> Runact manages execution, concurrency, lifecycle, and low-level I/O readiness. Higher-level libraries implement protocols and applications.
+
+### Deliverables
+
+**Phase 9a — Cancellation & Task Groups** (current priority)
+- `CancellationToken` — cooperative cancellation
+- `TaskGroup` — structured concurrency
+- Parent → child cancellation propagation
+
+**Phase 9b — Timers**
+- `runtime.sleep(duration)`
+- `runtime.timeout(duration, future)`
+- Timer wheel or priority queue implementation
+
+**Phase 9c — Actor ↔ Async Integration**
+- `actor → spawn_task → result message`
+- Actor remains responsive while async task waits
+
+**Phase 9d — Process Runtime**
+- `runact-process` — spawn processes, stdin/stdout/stderr
+- Exit status, timeout, cancellation, graceful termination
+- Prevent orphaned processes on agent cancellation
+
+**Phase 9e — TCP Reactor**
+- `runact-net` — native async TCP with OS readiness integration
+- Linux `epoll` first, abstraction for future platforms
+- `TcpListener`, `TcpStream`, read/write/connect/accept
+
+**Phase 9f — Stress Testing**
+- 1K/10K TCP connections
+- Mixed workloads (actors + tasks + TCP + compute)
+- Slow/fast clients, partial writes, cancellation
+
+### Architectural Invariants
+
+1. Runact is NOT an HTTP/WebSocket/TLS framework
+2. Runact is NOT an AI framework
+3. Runact executes standard Rust futures
+4. Actors and async tasks remain distinct concepts
+5. CPU-heavy work uses the compute pool
+6. Async I/O never blocks an actor worker
+7. Cancellation is cooperative
+8. Structured concurrency prevents orphaned tasks
+9. TCP is the lowest-level network primitive
+10. HTTP/WebSocket remain outside Runact
+11. Tokio is optional, not fundamental
+12. Runact must remain useful independently of PaperOS
+
+### Success Criteria
+
+- Parent cancellation reaches all children
+- Pending timers consume no worker time
+- Actor remains responsive while async task waits
+- Cancelled agent cannot leave orphaned processes
+- TcpStream can asynchronously wait for readiness
+- Multiple concurrent TCP connections work without blocking workers
+- No orphaned tasks, no orphaned processes
+
+### Crate Architecture (future)
+
+```text
+runact/
+├── runact-core/      # actors, mailbox, scheduler, supervision
+├── runact-runtime/   # executor, tasks, wakers, cancellation, timers
+├── runact-compute/   # CPU-heavy work pool
+├── runact-net/       # TCP, reactor, readiness, sockets
+└── runact-process/   # process lifecycle, stdin/stdout/stderr
+```
+
+---
+
 ## Timeline
 
 ```text
