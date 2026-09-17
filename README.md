@@ -12,6 +12,7 @@ A Rust-native actor runtime combining BEAM-style lightweight processes, messagin
 - **Timers** — one-shot and periodic with drift correction
 - **Resources** — type-safe capability-based resource management
 - **Backpressure** — bounded mailbox with `MailboxFull` error on overflow
+- **Async tasks** — native executor for standard Rust `Futures` with `Runtime::spawn_task`, `TaskHandle` (`recv`/`try_recv`/`recv_timeout`), panic isolation, and deterministic shutdown; cancellation, task timers, and task groups are planned ([boundary](docs/async-runtime.md))
 - **Observability** — structured logging via `tracing`
 
 ## Quick Start
@@ -38,6 +39,7 @@ runtime.send(id, "world".to_string()).unwrap();
 ## Documentation
 
 - [Architecture](docs/architecture.md) — Full architectural document with runtime model, invariants, and development order
+- [Async Runtime](docs/async-runtime.md) — Architectural boundary: Runact schedules asynchronous work, I/O libraries define it (Future executor, task lifecycle, cancellation, timers, task groups)
 - [Vision](docs/vision.md) — Design priorities and long-term evolution
 - [Getting Started](docs/guides/getting-started.md) — Walkthrough of core APIs
 - [Supervision](docs/guides/supervision.md) — Supervision trees and restart strategies

@@ -3,10 +3,12 @@ use crate::compute::{ComputeConfig, ComputeScheduler};
 use crate::error::RuntimeError;
 use crate::scheduler::{MAX_REDUCTIONS, ReductionCounter, Scheduler};
 use crate::supervision::{ChildSpec, RestartStrategy, Supervisor};
+use crate::task::{Executor, TaskError, TaskHandle};
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{
     Arc, RwLock,
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use std::time::{Duration, Instant};
 
@@ -78,12 +80,16 @@ pub struct Runtime {
     scheduler: Scheduler,
     compute: ComputeScheduler,
     timers: TimerService,
+    tasks: Executor,
     actors: Arc<RwLock<HashMap<ActorId, ActorInfo>>>,
     senders: Arc<RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>>,
     request_counter: AtomicU64,
     stop: Arc<AtomicBool>,
     mailbox_capacity: usize,
     shutdown_timeout: Duration,
+    /// Number of actor loops still running; lets shutdown wait for a real
+    /// drain instead of sleeping a fixed window.
+    pending_actors: Arc<AtomicUsize>,
 }
 
 impl Runtime {
@@ -100,17 +106,20 @@ impl Runtime {
 
         let senders = Arc::new(RwLock::new(HashMap::new()));
         let timers = TimerService::new(senders.clone());
+        let tasks = Executor::new();
 
         Ok(Self {
             scheduler,
             compute,
             timers,
+            tasks,
             actors: Arc::new(RwLock::new(HashMap::new())),
             senders,
             request_counter: AtomicU64::new(0),
             stop: Arc::new(AtomicBool::new(false)),
             mailbox_capacity: config.mailbox_capacity,
             shutdown_timeout: config.shutdown_timeout,
+            pending_actors: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -151,6 +160,8 @@ impl Runtime {
         }
         let stop = self.stop.clone();
         let reductions = ReductionCounter::new();
+        let pending_actors = self.pending_actors.clone();
+        pending_actors.fetch_add(1, Ordering::SeqCst);
 
         tracing::info!(actor_id = %id, "spawned actor");
 
@@ -182,6 +193,7 @@ impl Runtime {
                         }
                         Err(_) => {
                             tracing::info!(actor_id = %id, "actor stopped");
+                            pending_actors.fetch_sub(1, Ordering::SeqCst);
                             break;
                         }
                     }
@@ -217,7 +229,10 @@ impl Runtime {
                         reductions.reset();
                         continue;
                     }
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                        pending_actors.fetch_sub(1, Ordering::SeqCst);
+                        break;
+                    }
                 }
             }
         });
@@ -373,6 +388,22 @@ impl Runtime {
         Ok(id)
     }
 
+    /// Spawn an asynchronous task on the native async executor.
+    ///
+    /// The returned [`TaskHandle`] yields the future's output. Pending futures
+    /// consume no worker time; a Runact-specific waker re-queues them when they
+    /// become runnable again. Panics inside the future are caught and surfaced
+    /// to the handle as [`TaskError::Panic`] instead of killing a worker.
+    ///
+    /// Dropping the handle detaches the task: it still runs to completion.
+    pub fn spawn_task<F, T>(&self, future: F) -> Result<TaskHandle<T>, TaskError>
+    where
+        F: Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        self.tasks.spawn(future)
+    }
+
     /// List all actors.
     pub fn list_actors(&self) -> Result<Vec<ActorInfo>, RuntimeError> {
         let actors = self
@@ -442,13 +473,16 @@ impl Runtime {
 
     /// Gracefully shut down the runtime.
     ///
-    /// Sets the stop flag, waits up to `shutdown_timeout` for actors to drain
-    /// their remaining messages, then clears all internal state.
+    /// Stops accepting async tasks, sweeps pending tasks so their handles
+    /// resolve deterministically, waits up to `shutdown_timeout` for actors to
+    /// drain their remaining messages, then stops all internal services.
     pub fn shutdown(&mut self) -> Result<(), RuntimeError> {
         self.stop.store(true, Ordering::SeqCst);
 
+        self.tasks.shutdown();
+
         let deadline = Instant::now() + self.shutdown_timeout;
-        while Instant::now() < deadline {
+        while self.pending_actors.load(Ordering::Relaxed) > 0 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(10));
         }
 

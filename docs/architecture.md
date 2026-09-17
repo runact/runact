@@ -23,7 +23,10 @@ Runact is a lightweight actor runtime for Rust that provides a programming model
 * cancellation
 * resource/capability management
 * dedicated CPU-compute execution
+* async task execution (standard Rust `Future`s)
 * observability
+
+Async tasks are a planned execution model described in the [Async Runtime](async-runtime.md) plan. Runact will execute standard Rust `Future`s on its own executor while keeping the actor model synchronous and cooperative.
 
 The goal is **not** to reproduce the BEAM internally.
 
@@ -98,6 +101,32 @@ Runact consists of several major layers.
        │ Actor Work  │                  │ Compute Pool│
        └─────────────┘                  └─────────────┘
 ```
+
+### Three Execution Models
+
+Runact targets three execution models, executed cooperatively by the scheduler:
+
+```text
+                         Runact
+                           │
+          ┌────────────────┼────────────────┐
+          │                │                │
+          ▼                ▼                ▼
+       Actors         Async Tasks      Compute Jobs
+          │                │                │
+          │                │                │
+    stateful work      I/O work         CPU work
+          │                │                │
+          └────────────────┼────────────────┘
+                           │
+                       Scheduler
+```
+
+* **Actors** — long-lived stateful components processing bounded work per message.
+* **Async tasks** — standard Rust `Future`s that wait on external events (I/O, timers). A pending async task consumes no worker execution time.
+* **Compute jobs** — CPU-heavy work offloaded to the compute pool so it never starves actor/async execution.
+
+Detailed design, lifecycle, cancellation, and implementation order for the async task model are specified in [Async Runtime](async-runtime.md).
 
 ---
 
@@ -460,6 +489,19 @@ Examples:
 * large mathematical computation
 
 Long CPU work must not block an actor worker. It is offloaded to the compute pool.
+
+### Async work
+
+Examples:
+
+* WebSocket messages
+* HTTP requests
+* network/filesystem I/O
+* process I/O
+* timers
+* LSP communication
+
+Async work waits on external events instead of consuming CPU. It is executed as standard Rust `Future`s on the Runact executor (planned — see [Async Runtime](async-runtime.md)). A pending async task must not occupy a worker; when its waker fires, the task is re-enqueued and polled again.
 
 ---
 
@@ -956,6 +998,27 @@ runact/
 │   └── runtime.rs            # Runtime, RuntimeConfig, RuntimeStats, RequestHandle
 ```
 
+### Async Runtime Layers (planned)
+
+The async runtime adds the following conceptual modules (see [Async Runtime](async-runtime.md)):
+
+```text
+runact/
+│
+├── runtime
+├── scheduler
+├── actor
+├── mailbox
+├── task        # Task<T>, TaskHandle<T>, task lifecycle
+├── executor    # Future executor integrated with the scheduler
+├── waker       # Runact-specific Waker with atomic state machine
+├── timer       # sleep()/timeout() via timer wheel or priority queue + driver
+├── cancellation # CancellationToken
+├── supervision
+├── compute
+└── io          # optional, only if native OS I/O is ever needed
+```
+
 These are conceptual boundaries. The project is a single crate.
 
 ---
@@ -1197,13 +1260,29 @@ Recommended implementation order (v1.0.0):
 
 Do not add distributed actors or a complex plugin system before the local runtime semantics are stable.
 
+### Async Runtime (planned)
+
+After the v1.0.0 actor core is stable, implement the async runtime in the order defined by the [Async Runtime](async-runtime.md) boundary document (its §20 implementation strategy):
+
+```text
+1. Task, TaskHandle, Executor, future polling
+2. Runact waker, runnable queue, wake deduplication
+3. Async task scheduler integration
+4. CancellationToken, task cancellation
+5. Timers: sleep(), timeout()
+6. Actor → spawn async task → result message
+7. Task groups (structured concurrency)
+8. Compute pool separation
+9. Optional runtime adapters (e.g. Tokio) only when required
+```
+
 ---
 
 ## 37. Final Architectural Definition
 
 Runact should be understood as:
 
-> A Rust-native actor runtime that provides lightweight process isolation, message-driven concurrency, supervision, cooperative scheduling, and dedicated CPU execution while preserving Rust ownership and deterministic resource management.
+> A Rust-native actor and asynchronous execution runtime that provides lightweight process-style actors, cooperative scheduling, standard Rust Future execution, structured task lifecycle, cancellation, timers, supervision, and dedicated CPU execution—while leaving application-level I/O protocols to specialized libraries.
 
 Its most important feature is not any individual API.
 
@@ -1221,6 +1300,20 @@ Scheduler
 Actor
   ↓
 Event / Result
+```
+
+with async tasks joining the same scheduler:
+
+```text
+Future
+  ↓
+Task
+  ↓
+Runact Scheduler
+  ↓
+poll
+  ↓
+Pending → waker → re-enqueue
 ```
 
 Runact is the execution foundation.
@@ -1303,6 +1396,8 @@ runact/
 
 ## See Also
 
+- [Async Runtime](async-runtime.md) — Architectural boundary for the async task model: Runact schedules asynchronous work, I/O libraries define it (Future execution, task lifecycle, cancellation, timers, task groups, compute)
+- [ADR-0003: Native Async Runtime](adr/0003-native-async-runtime.md) — Rationale for a native Future executor without a Tokio core dependency
 - [Actor Communication Principles](actor-communication.md) — 24 principles governing message flow, request/reply, backpressure, cancellation, and the fundamental invariant: actors must never block scheduler workers.
 - [Actors](actors.md) — The Actor trait, ActorId, ActorContext, ownership model, message design.
 - [Scheduler](scheduler.md) — BEAM-style scheduler with work stealing and reduction counting.

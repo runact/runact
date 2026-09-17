@@ -30,6 +30,7 @@
 //! - **Runtime** — the top-level coordinator that spawns actors and routes messages.
 //! - **Supervision** — fault tolerance via configurable restart strategies.
 //! - **Compute** — a thread pool for CPU-intensive work off the actor scheduler.
+//! - **Async tasks** — a native executor for standard Rust `Futures` with task handles.
 //! - **Timers** — scheduled one-shot and periodic message delivery.
 //! - **Resources** — type-safe capability-based resource management.
 
@@ -42,6 +43,7 @@ mod compute;
 mod mailbox;
 mod runtime;
 mod scheduler;
+mod task;
 
 pub use actor::{Actor, ActorContext, ActorError, ActorId};
 pub use compute::{ComputeConfig, ComputeError, ComputeHandle, ComputeScheduler};
@@ -50,6 +52,7 @@ pub use resource::{Capability, ResourceHandle, ResourceRegistry};
 pub use runtime::{ActorInfo, RequestHandle, Runtime, RuntimeConfig, RuntimeStats};
 pub use scheduler::Scheduler;
 pub use supervision::{ChildSpec, RestartPolicy, RestartStrategy, Supervisor};
+pub use task::{TaskError, TaskHandle, TaskId};
 pub use timer::{Timer, TimerConfig, TimerId};
 
 mod supervision;

@@ -28,9 +28,11 @@ This document outlines the development phases for Runact. Runact is the runtime;
 - ✅ `docs/runtime.md` — Runtime API, RequestHandle, RuntimeConfig
 - ✅ `docs/vision.md` — Vision and design priorities
 - ✅ `docs/roadmap.md` — This document
+- ✅ `docs/async-runtime.md` — Async runtime boundary: what Runact owns vs. what I/O libraries provide
 - ✅ `docs/security.md` — Capability-based security
 - ✅ `docs/adr/0001-beam-style-scheduler.md` — ADR for scheduler choice
 - ✅ `docs/adr/0002-dual-scheduler-architecture.md` — ADR for dual scheduler
+- ✅ `docs/adr/0003-native-async-runtime.md` — ADR for native Future executor (no Tokio core dependency)
 - ✅ Single-crate structure
 
 ---
@@ -107,7 +109,35 @@ PaperOS is a separate project. Runact provides the foundation.
 
 ---
 
-## Phase 7 — Programmability
+## Phase 7 — Async Runtime
+
+Planned. Runact will extend the runtime with a native async task system executing standard Rust `Future`s on its own executor, within the strict boundary defined by [Async Runtime](async-runtime.md): Runact schedules asynchronous work; I/O libraries define asynchronous work. See also [ADR-0003](adr/0003-native-async-runtime.md).
+
+Implemented in the order defined by async-runtime.md §20:
+
+### Deliverables
+
+- Phase 1 — `Task`, `TaskHandle`, Executor, future polling
+- Phase 2 — Runact waker, runnable queue, wake deduplication (atomic task state)
+- Phase 3 — Async task scheduler integration
+- Phase 4 — Cancellation (`CancellationToken`, task cancellation)
+- Phase 5 — Timers (`sleep()`, `timeout()`)
+- Phase 6 — Actor ↔ async integration (`ctx.spawn(async { ... })`, result delivered as a message)
+- Phase 7 — Task groups (structured concurrency)
+- Phase 8 — Compute pool separation (CPU-heavy work off the async/actor workers)
+- Phase 9 — Optional runtime adapters (e.g. Tokio) only when a concrete library requires one
+
+Success criteria:
+
+- Pending async task consumes no worker execution time (async-runtime.md §22, invariant 7)
+- Cancel 10,000 tasks without leaks; rapid spawn/cancel cycles stable
+- 10,000-task and 100,000-wakeup stress tests pass (test list in async-runtime.md §21)
+- Shutdown deterministically terminates all owned tasks within `shutdown_timeout`
+- Fair mixed actor/async/compute workloads (invariant 9: CPU-heavy work never starves actors or async I/O)
+
+---
+
+## Phase 8 — Programmability
 
 Future work:
 
@@ -158,6 +188,8 @@ Compute Pool
 Timers and Cancellation
     ↓
 Resources and Capabilities
+    ↓
+Async Runtime (Future Executor, Task Groups)
     ↓
 Editor Runtime (PaperOS)
     ↓

@@ -77,6 +77,7 @@ Applications are clients of the runtime. Examples:
 - Cancellation (cooperative, via `ComputeHandle::cancel`)
 - Dedicated compute pool for CPU-intensive work with panic isolation
 - Capability-based resource management (`Capability`, `ResourceHandle`, `ResourceRegistry`)
+- Async task execution (planned — standard Rust `Future`s on a native Runact executor, see [Async Runtime](async-runtime.md))
 - Observability via `tracing` (lifecycle events, restarts, crashes)
 - Runtime statistics (`RuntimeStats`, `ActorInfo`)
 
@@ -89,6 +90,7 @@ Applications are clients of the runtime. Examples:
 - Git integration
 - Terminal emulation
 - UI rendering
+- HTTP/WebSocket protocol implementations (execution is Runact's job; networking is delegated to specialized libraries — see [Async Runtime](async-runtime.md))
 
 These are **application concerns**, not runtime concerns.
 
@@ -112,6 +114,8 @@ Runact v1 is complete when:
 
 ```text
 minimal actor runtime
+        ↓
+async task runtime (Future executor, task groups)
         ↓
 workspace runtime
         ↓

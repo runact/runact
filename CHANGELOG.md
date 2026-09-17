@@ -5,6 +5,14 @@ All notable changes to Runact will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Async tasks** — native executor for standard Rust `Futures` (no Tokio). `Runtime::spawn_task` returns a `TaskHandle` with `recv()`/`try_recv()`/`recv_timeout()`, a cached terminal outcome, and panic isolation (a panicking task surfaces `TaskError::Panic` without killing a worker). Shutdown sweeps all live tasks and resolves pending handles to `TaskError::ExecutorShutdown`.
+- **`TaskId`** — unique identifier for a spawned async task.
+- **`TaskError`** — task failure modes: `Panic(String)`, `ExecutorShutdown`, `Timeout`.
+
 ## [1.0.0] - 2026-09-15
 
 ### Added
