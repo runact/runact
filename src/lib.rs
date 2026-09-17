@@ -36,6 +36,8 @@
 
 pub mod actor;
 pub mod error;
+pub mod net;
+pub mod process;
 pub mod resource;
 pub mod timer;
 
@@ -49,10 +51,13 @@ pub use actor::{Actor, ActorContext, ActorError, ActorId};
 pub use compute::{ComputeConfig, ComputeError, ComputeHandle, ComputeScheduler};
 pub use error::RuntimeError;
 pub use resource::{Capability, ResourceHandle, ResourceRegistry};
-pub use runtime::{ActorInfo, RequestHandle, Runtime, RuntimeConfig, RuntimeStats};
+pub use runtime::{
+    ActorInfo, RequestHandle, Runtime, RuntimeConfig, RuntimeSender, RuntimeStats, SleepFuture,
+    TimeoutFuture,
+};
 pub use scheduler::Scheduler;
 pub use supervision::{ChildSpec, RestartPolicy, RestartStrategy, Supervisor};
-pub use task::{TaskError, TaskHandle, TaskId};
+pub use task::{CancellationToken, TaskError, TaskGroup, TaskHandle, TaskId};
 pub use timer::{Timer, TimerConfig, TimerId};
 
 mod supervision;

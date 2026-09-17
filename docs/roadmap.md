@@ -10,9 +10,12 @@ This document outlines the development phases for Runact. Runact is the runtime;
 
 | Component | Status | Tests |
 |-----------|--------|-------|
-| **Runact** (runtime) | v1.0.0 released | 19+ test files across basic, compute, observability, resource, scheduler, timer |
+| **Runact** (runtime) | v1.1.0 | 108+ tests across actor, async, cancellation, compute, observability, process, reactor, resource, scheduler, stress, tcp_api, timer |
+| **Phase 9** (Runtime + Networking) | ✅ Complete | cancellation, timers, actor-async integration, process runtime, TCP reactor, TCP API, stress tests |
 
 **Paper** (editor) — Separate project, tracked at `paper/docs/roadmap.md`
+
+Full development plan: [Development Plan](development-plan.md)
 
 ---
 
@@ -147,7 +150,79 @@ Future work:
 
 ---
 
-## Phase 9 — Runtime + Networking Extension
+## Phase 10 — HTTP
+
+Build:
+
+```text
+runact-web
+```
+
+Start with:
+
+```text
+HTTP/1.1
+Request
+Response
+Headers
+Parser
+Encoder
+```
+
+See [Development Plan](development-plan.md) §48 Phase 9.
+
+---
+
+## Phase 11 — Web Framework
+
+Add:
+
+```text
+Router
+Handlers
+Middleware
+Extractors
+Streaming
+Static files
+```
+
+See [Development Plan](development-plan.md) §48 Phase 10.
+
+---
+
+## Phase 12 — WebSocket
+
+Add:
+
+```text
+Upgrade
+Frames
+Connection lifecycle
+Streaming
+Backpressure
+Cancellation
+```
+
+See [Development Plan](development-plan.md) §48 Phase 11.
+
+---
+
+## Phase 13 — Real Applications
+
+Build:
+
+```text
+REST API
+WebSocket server
+AI agent server
+Remote PaperOS server
+```
+
+See [Development Plan](development-plan.md) §48 Phase 12.
+
+---
+
+## Phase 9 — Runtime + Networking Extension ✅
 
 See [Runtime + Networking Plan](runtime-networking-plan.md) for the full design document.
 
@@ -159,32 +234,32 @@ This phase extends Runact into a small, Rust-native concurrency runtime for Pape
 
 ### Deliverables
 
-**Phase 9a — Cancellation & Task Groups** (current priority)
+**Phase 9a — Cancellation & Task Groups** ✅
 - `CancellationToken` — cooperative cancellation
 - `TaskGroup` — structured concurrency
 - Parent → child cancellation propagation
 
-**Phase 9b — Timers**
-- `runtime.sleep(duration)`
-- `runtime.timeout(duration, future)`
-- Timer wheel or priority queue implementation
+**Phase 9b — Timers** ✅
+- `runtime.sleep(duration)` — associated function
+- `runtime.timeout(duration, future)` — associated function
+- Crossbeam channel-based implementation
 
-**Phase 9c — Actor ↔ Async Integration**
+**Phase 9c — Actor ↔ Async Integration** ✅
 - `actor → spawn_task → result message`
 - Actor remains responsive while async task waits
 
-**Phase 9d — Process Runtime**
+**Phase 9d — Process Runtime** ✅
 - `runact-process` — spawn processes, stdin/stdout/stderr
 - Exit status, timeout, cancellation, graceful termination
 - Prevent orphaned processes on agent cancellation
 
-**Phase 9e — TCP Reactor**
+**Phase 9e — TCP Reactor** ✅
 - `runact-net` — native async TCP with OS readiness integration
 - Linux `epoll` first, abstraction for future platforms
 - `TcpListener`, `TcpStream`, read/write/connect/accept
 
-**Phase 9f — Stress Testing**
-- 1K/10K TCP connections
+**Phase 9f — Stress Testing** ✅
+- 500 concurrent TCP connections
 - Mixed workloads (actors + tasks + TCP + compute)
 - Slow/fast clients, partial writes, cancellation
 
@@ -270,11 +345,19 @@ Resources and Capabilities
     ↓
 Async Runtime (Future Executor, Task Groups)
     ↓
-Editor Runtime (PaperOS)
+Process Runtime
     ↓
-Programmable Environment
+TCP Networking (Reactor, TcpListener, TcpStream)
     ↓
-Optional Distributed Runtime
+HTTP (runact-web)
+    ↓
+Web Framework (Router, Middleware, Extractors)
+    ↓
+WebSocket
+    ↓
+Real Applications (REST API, AI Agent Server, PaperOS)
 ```
 
 The runtime must earn every layer of complexity.
+
+See [Development Plan](development-plan.md) for the full 53-section architecture document.

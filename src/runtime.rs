@@ -6,10 +6,12 @@ use crate::supervision::{ChildSpec, RestartStrategy, Supervisor};
 use crate::task::{Executor, TaskError, TaskHandle};
 use std::collections::HashMap;
 use std::future::Future;
+use std::pin::Pin;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use crate::timer::{TimerId, TimerService};
@@ -404,6 +406,26 @@ impl Runtime {
         self.tasks.spawn(future)
     }
 
+    /// Sleep for the specified duration within an async task.
+    ///
+    /// This is an async method that yields control back to the executor
+    /// for the specified duration. The task will be re-polling after the
+    /// duration elapses.
+    pub fn sleep(_duration: Duration) -> SleepFuture {
+        SleepFuture::new(_duration)
+    }
+
+    /// Execute a future with a timeout.
+    ///
+    /// If the future completes before the timeout, returns `Ok(output)`.
+    /// If the timeout elapses first, returns `Err(TaskError::Timeout)`.
+    pub fn timeout<F, T>(duration: Duration, future: F) -> TimeoutFuture<F>
+    where
+        F: Future<Output = T>,
+    {
+        TimeoutFuture::new(duration, future)
+    }
+
     /// List all actors.
     pub fn list_actors(&self) -> Result<Vec<ActorInfo>, RuntimeError> {
         let actors = self
@@ -463,6 +485,20 @@ impl Runtime {
         RuntimeStats {
             actor_count: actors.len(),
             request_count: self.request_counter.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Get a clonable handle for sending messages to actors from external
+    /// threads (e.g. I/O reader/writer threads in the `net` module).
+    ///
+    /// This is a lightweight handle containing only the shared senders map
+    /// (an `Arc<RwLock<...>>`), so it can be cheaply cloned into any thread.
+    /// It mirrors [`Runtime::send`](Self::send) but does not require a
+    /// borrowed `&Runtime`, making it safe to capture in blocking I/O threads
+    /// that outlive a borrowed reference.
+    pub fn sender(&self) -> RuntimeSender {
+        RuntimeSender {
+            senders: self.senders.clone(),
         }
     }
 
@@ -546,4 +582,115 @@ pub struct RuntimeStats {
     pub actor_count: usize,
     /// Total number of requests sent through the runtime.
     pub request_count: u64,
+}
+
+/// Clonable handle for sending messages to actors from external threads.
+///
+/// Created via [`Runtime::sender`](Runtime::sender). Contains only the shared
+/// senders map (`Arc<RwLock<...>>`), so it can be cheaply cloned into I/O
+/// threads (e.g. the reader/writer threads in the `net` module) that need to
+/// deliver messages to actor mailboxes without borrowing a `&Runtime`.
+#[must_use]
+#[derive(Clone)]
+pub struct RuntimeSender {
+    senders: std::sync::Arc<
+        std::sync::RwLock<
+            std::collections::HashMap<
+                ActorId,
+                crossbeam_channel::Sender<crate::runtime::MessageEnvelope>,
+            >,
+        >,
+    >,
+}
+
+impl RuntimeSender {
+    /// Send a fire-and-forget message to an actor. Non-blocking; returns
+    /// `RuntimeError::MailboxFull` if the actor's mailbox is at capacity.
+    pub fn send<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError> {
+        let senders = self
+            .senders
+            .read()
+            .map_err(|_| RuntimeError::RuntimeStopped)?;
+        let sender = senders
+            .get(&target)
+            .ok_or(RuntimeError::ActorNotFound(target))?;
+        sender
+            .try_send(crate::runtime::MessageEnvelope::Message(Box::new(message)))
+            .map_err(|e| match e {
+                crossbeam_channel::TrySendError::Full(_) => RuntimeError::MailboxFull(target),
+                crossbeam_channel::TrySendError::Disconnected(_) => RuntimeError::RuntimeStopped,
+            })
+    }
+}
+
+/// Future that completes after a specified duration.
+#[derive(Debug)]
+pub struct SleepFuture {
+    receiver: crossbeam_channel::Receiver<()>,
+}
+
+impl SleepFuture {
+    pub fn new(duration: Duration) -> Self {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(duration);
+            let _ = tx.send(());
+        });
+        Self { receiver: rx }
+    }
+}
+
+impl Future for SleepFuture {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.receiver.try_recv() {
+            Ok(()) => Poll::Ready(()),
+            Err(crossbeam_channel::TryRecvError::Empty) => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            Err(crossbeam_channel::TryRecvError::Disconnected) => Poll::Ready(()),
+        }
+    }
+}
+
+/// Future that completes with a timeout.
+#[derive(Debug)]
+pub struct TimeoutFuture<F> {
+    future: F,
+    receiver: crossbeam_channel::Receiver<()>,
+}
+
+impl<F> TimeoutFuture<F> {
+    pub fn new(duration: Duration, future: F) -> Self {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            std::thread::sleep(duration);
+            let _ = tx.send(());
+        });
+        Self {
+            future,
+            receiver: rx,
+        }
+    }
+}
+
+impl<F: Future> Future for TimeoutFuture<F> {
+    type Output = Result<F::Output, TaskError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Ok(()) = self.receiver.try_recv() {
+            return Poll::Ready(Err(TaskError::Timeout));
+        }
+        let this = unsafe { self.get_unchecked_mut() };
+        let future = unsafe { Pin::new_unchecked(&mut this.future) };
+        match future.poll(cx) {
+            Poll::Ready(output) => Poll::Ready(Ok(output)),
+            Poll::Pending => {
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+    }
 }

@@ -11,12 +11,14 @@
 //! live-task registry, so a pending handle always resolves deterministically
 //! instead of blocking forever.
 
+pub mod cancellation;
 mod cell;
 mod error;
 mod executor;
 mod handle;
 mod id;
 
+pub use cancellation::{CancellationToken, TaskGroup};
 pub use error::TaskError;
 pub use handle::TaskHandle;
 pub use id::TaskId;
