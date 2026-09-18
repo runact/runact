@@ -233,6 +233,14 @@ AI agent server
 Remote PaperOS server
 ```
 
+### Status: In Progress
+
+**AI agent server** — `examples/agent_server.rs` demonstrates the full agent lifecycle over WebSocket:
+- `AgentActor` (runact `Actor`) wraps a pluggable `ModelAdapter`
+- `RuntimeSender` delivers user messages from WebSocket callbacks to the actor
+- Built on the `RunactTcpStream` bridge from Phase 12
+- Integration test `ws_agent_server.rs` verifies end-to-end WebSocket echo through the actor
+
 See [Development Plan](development-plan.md) §48 Phase 12.
 
 ---

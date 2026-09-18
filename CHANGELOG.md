@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **runact-web: Runact TCP bridge** — `RunactTcpStream` adapter implements `Read`/`Write`/`SetReadTimeout` for `runact::net::tcp_api::TcpStream`, enabling `WebSocketServer` to accept connections from the runact async TCP runtime. Integration test `ws_runact_bridge.rs` verifies full broadcast over runact-managed TCP connections. `WebSocketServer` is now generic over `S: Read + Write + SetReadTimeout + Send + 'static`.
 - **runact-web: WebSocketServer Connected event** — `ServerEvent::Connected` variant sent before the reader loop, allowing callbacks to register peer writers immediately upon handshake completion (fixes race condition in broadcast patterns).
 - **runact-web: read_handshake_request helper** — `WebSocketServer::bind` now uses a retry-based read with 5s timeout, handling non-blocking streams (like `RunactTcpStream`) that return `WouldBlock` during handshake.
+- **runact-web: agent_server example + test** — Phase 13 application: WebSocket server bridging runact's TCP listener to a supervised `AgentActor`. Demonstrates the full architecture from `docs/agents.md`: actor-managed LLM adapter with `MockAdapter`, `RuntimeSender` for cross-thread message delivery, and `ModelAdapter` trait for pluggable backends.
 
 ## [1.2.1] - 2026-09-16
 

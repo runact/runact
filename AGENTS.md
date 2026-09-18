@@ -4,7 +4,7 @@ This file refines the global workflow (see `~/.config/opencode/AGENTS.md`) for t
 
 ## Project Identity
 
-Runact is a **Rust-native actor runtime** (v1.1.0, edition 2024, MSRV 1.85) — BEAM-style lightweight processes, messaging, scheduling, supervision, with Rust's ownership model. Single crate, no workspace.
+Runact is a **Rust-native actor runtime** (v1.2.1, edition 2024, MSRV 1.85) — BEAM-style lightweight processes, messaging, scheduling, supervision, with Rust's ownership model. Workspace with `runact` (core) and `runact-web` (HTTP/WebSocket layer) members.
 
 Runact is extending toward a **native async task system** (standard Rust `Future` execution on its own executor) and **TCP networking** for remote AI agents. See:
 
@@ -35,6 +35,7 @@ tests/              # Integration tests — one file per feature area (basic, co
                     # These are the ACCEPTANCE layer: behavioral, hitting real entry points.
 benches/runact_bench.rs   # Criterion benchmarks (harness = false)
 docs/               # architecture.md, async-runtime.md, runtime-networking-plan.md, adr/, guides/, etc.
+runact-web/         # HTTP/WebSocket layer (separate crate, workspace member)
 ```
 
 ## Mandatory Workflow
