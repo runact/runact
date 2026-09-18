@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 /// A decoded WebSocket message from the reader loop.
 #[derive(Debug)]
@@ -77,6 +78,8 @@ impl<T> From<TrySendError<T>> for SendError {
 enum Outbound {
     Frame(Frame),
     Close(u16),
+    Ping(Vec<u8>),
+    Pong(Vec<u8>),
     Shutdown,
 }
 
@@ -107,10 +110,32 @@ impl AsyncWriter {
             .map_err(Into::into)
     }
 
+    /// Send a ping frame with the given payload. Non-blocking.
+    pub fn send_ping(&self, payload: &[u8]) -> Result<(), SendError> {
+        self.tx
+            .try_send(Outbound::Ping(payload.to_vec()))
+            .map_err(Into::into)
+    }
+
+    /// Send a pong frame with the given payload. Non-blocking.
+    pub fn send_pong(&self, payload: &[u8]) -> Result<(), SendError> {
+        self.tx
+            .try_send(Outbound::Pong(payload.to_vec()))
+            .map_err(Into::into)
+    }
+
     /// Signal the writer thread to stop and close the connection.
     pub fn shutdown(&self) {
         let _ = self.tx.try_send(Outbound::Shutdown);
     }
+}
+
+/// Configuration for [`AsyncWebSocket`].
+#[derive(Debug, Clone, Default)]
+pub struct WebSocketConfig {
+    /// Interval for sending ping frames to keep the connection alive.
+    /// When set, an internal thread sends ping frames at this interval.
+    pub ping_interval: Option<Duration>,
 }
 
 /// An asynchronous WebSocket connection over a byte stream.
@@ -123,6 +148,7 @@ pub struct AsyncWebSocket {
     shutdown: Arc<AtomicBool>,
     reader_handle: Option<thread::JoinHandle<()>>,
     writer_handle: Option<thread::JoinHandle<()>>,
+    ping_handle: Option<thread::JoinHandle<()>>,
 }
 
 impl AsyncWebSocket {
@@ -131,6 +157,18 @@ impl AsyncWebSocket {
     /// The stream is consumed and shared between a reader thread and a writer
     /// thread. Incoming frames are delivered to `callback`.
     pub fn with_callback<S, F>(stream: S, callback: F) -> Self
+    where
+        S: Read + Write + Send + 'static,
+        F: Fn(Message) + Send + Sync + 'static,
+    {
+        Self::with_callback_and_config(stream, callback, WebSocketConfig::default())
+    }
+
+    /// Create a new async WebSocket with configuration.
+    ///
+    /// Like [`with_callback`](Self::with_callback) but accepts a
+    /// [`WebSocketConfig`] for options such as ping interval heartbeats.
+    pub fn with_callback_and_config<S, F>(stream: S, callback: F, config: WebSocketConfig) -> Self
     where
         S: Read + Write + Send + 'static,
         F: Fn(Message) + Send + Sync + 'static,
@@ -152,11 +190,29 @@ impl AsyncWebSocket {
             Self::writer_loop(stream_arc, rx, shutdown_for_writer);
         });
 
+        // Optional ping heartbeat thread
+        let ping_handle = config.ping_interval.map(|interval| {
+            let shutdown_for_ping = shutdown.clone();
+            thread::spawn(move || {
+                loop {
+                    if shutdown_for_ping.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    thread::sleep(interval);
+                    if shutdown_for_ping.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let _ = tx.try_send(Outbound::Ping(Vec::new()));
+                }
+            })
+        });
+
         Self {
             writer,
             shutdown,
             reader_handle: Some(reader_handle),
             writer_handle: Some(writer_handle),
+            ping_handle,
         }
     }
 
@@ -275,6 +331,42 @@ impl AsyncWebSocket {
                     }
                 }
                 Ok(Outbound::Shutdown) => break,
+                Ok(Outbound::Ping(payload)) => {
+                    let frame = Frame {
+                        fin: true,
+                        opcode: OpCode::Ping,
+                        masked: false,
+                        mask_key: [0; 4],
+                        payload,
+                    };
+                    let encoded = frame.encode();
+                    let mut guard = match stream_arc.lock() {
+                        Ok(g) => g,
+                        Err(_) => break,
+                    };
+                    if let Some(stream) = guard.as_mut() {
+                        let _ = stream.write_all(&encoded);
+                        let _ = stream.flush();
+                    }
+                }
+                Ok(Outbound::Pong(payload)) => {
+                    let frame = Frame {
+                        fin: true,
+                        opcode: OpCode::Pong,
+                        masked: false,
+                        mask_key: [0; 4],
+                        payload,
+                    };
+                    let encoded = frame.encode();
+                    let mut guard = match stream_arc.lock() {
+                        Ok(g) => g,
+                        Err(_) => break,
+                    };
+                    if let Some(stream) = guard.as_mut() {
+                        let _ = stream.write_all(&encoded);
+                        let _ = stream.flush();
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -291,6 +383,9 @@ impl Drop for AsyncWebSocket {
             let _ = handle.join();
         }
         if let Some(handle) = self.writer_handle.take() {
+            let _ = handle.join();
+        }
+        if let Some(handle) = self.ping_handle.take() {
             let _ = handle.join();
         }
     }

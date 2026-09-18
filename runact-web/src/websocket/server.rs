@@ -73,9 +73,30 @@ impl ConnectionWriter {
         })
     }
 
+    /// Send a binary frame to the peer.
+    pub fn send_binary(&self, data: &[u8]) -> Result<(), SendError> {
+        self.0.send(&Frame {
+            fin: true,
+            opcode: OpCode::Binary,
+            masked: false,
+            mask_key: [0; 4],
+            payload: data.to_vec(),
+        })
+    }
+
     /// Send a close frame with the given status code.
     pub fn send_close(&self, status: u16) -> Result<(), SendError> {
         self.0.send_close(status)
+    }
+
+    /// Send a ping frame with the given payload.
+    pub fn send_ping(&self, payload: &[u8]) -> Result<(), SendError> {
+        self.0.send_ping(payload)
+    }
+
+    /// Send a pong frame with the given payload.
+    pub fn send_pong(&self, payload: &[u8]) -> Result<(), SendError> {
+        self.0.send_pong(payload)
     }
 }
 
@@ -252,6 +273,58 @@ impl WebSocketServer {
         let conn_writer = ConnectionWriter(ws.get_writer());
 
         // Forward events to the user callback
+        for event in event_rx.iter() {
+            callback(&conn_writer, event);
+        }
+
+        Ok(())
+    }
+
+    /// Complete the WebSocket handshake and start the reader loop with
+    /// configuration.
+    ///
+    /// Like [`accept_with_callback`](Self::accept_with_callback) but accepts a
+    /// [`WebSocketConfig`] for options such as ping interval heartbeats.
+    pub fn accept_with_callback_and_config<F>(
+        mut self,
+        callback: F,
+        config: super::async_ws::WebSocketConfig,
+    ) -> Result<(), HandshakeError>
+    where
+        F: Fn(&ConnectionWriter, ServerEvent) + Send + Sync + 'static,
+    {
+        let mut pending = self
+            .pending
+            .take()
+            .ok_or(HandshakeError::HandshakeAlreadyPerformed)?;
+
+        let key = pending.request.headers.get("Sec-WebSocket-Key").ok_or(
+            HandshakeError::UpgradeError(UpgradeError::MissingHeader("Sec-WebSocket-Key".into())),
+        )?;
+
+        let accept = build_accept_key(key);
+
+        let response = format!(
+            "HTTP/1.1 101 Switching Protocols\r\n\
+             Upgrade: websocket\r\n\
+             Connection: Upgrade\r\n\
+             Sec-WebSocket-Accept: {accept}\r\n\
+             \r\n"
+        );
+        pending.stream.write_all(response.as_bytes())?;
+        pending.stream.flush()?;
+
+        let (event_tx, event_rx) = mpsc::sync_channel::<ServerEvent>(1000);
+
+        let ws = AsyncWebSocket::with_callback_and_config(
+            pending.stream,
+            move |msg| {
+                let _ = event_tx.send(msg.into());
+            },
+            config,
+        );
+        let conn_writer = ConnectionWriter(ws.get_writer());
+
         for event in event_rx.iter() {
             callback(&conn_writer, event);
         }
