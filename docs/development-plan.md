@@ -1487,191 +1487,38 @@ The goal is measurement, not marketing claims.
 
 # 48. Development Phases
 
-## Phase 1 — Core
+Development phases are tracked in [Roadmap](roadmap.md). The roadmap is the authoritative source for phase numbering and status.
 
-Build:
+This document describes the architecture and design. For implementation status, see the roadmap.
 
-```text
-runact-core
-```
+### Current Status (v1.2.0)
 
-Implement:
+| Phase | Name | Status |
+|-------|------|--------|
+| 0 | Architecture | ✅ Complete |
+| 1 | Runtime Core | ✅ Complete |
+| 2 | Reliability (Supervision) | ✅ Complete |
+| 3 | Compute | ✅ Complete |
+| 4 | Timers | ✅ Complete |
+| 5 | Resources and Capabilities | ✅ Complete |
+| 7 | Async Runtime | ✅ Complete |
+| 9 | Runtime + Networking | ✅ Complete |
+| 10 | HTTP (runact-web) | Next |
 
-```text
-Actor
-Message
-Mailbox
-ActorId
-Lifecycle
-```
+### Next Phases
 
----
+**Phase 10 — HTTP** (see roadmap.md)
+- Build `runact-web` as a separate workspace member
+- Start with HTTP/1.1, Request, Response, Headers, Parser, Encoder
 
-## Phase 2 — Scheduler
+**Phase 11 — Web Framework** (see roadmap.md)
+- Router, Handlers, Middleware, Extractors, Streaming, Static files
 
-Build:
+**Phase 12 — WebSocket** (see roadmap.md)
+- Upgrade, Frames, Connection lifecycle, Streaming, Backpressure, Cancellation
 
-```text
-runact-runtime
-```
-
-Implement:
-
-```text
-Workers
-Scheduler
-Fairness
-Execution budget
-Work stealing
-```
-
----
-
-## Phase 3 — Async
-
-Implement:
-
-```text
-Future
-Task
-Waker
-Cancellation
-Timers
-TaskGroup
-```
-
----
-
-## Phase 4 — Compute
-
-Implement:
-
-```text
-ComputePool
-ComputeJob
-Backpressure
-```
-
----
-
-## Phase 5 — Fault Tolerance
-
-Implement:
-
-```text
-Supervisor
-RestartPolicy
-Monitoring
-Backoff
-Failure isolation
-```
-
----
-
-## Phase 6 — Networking
-
-Implement:
-
-```text
-runact-net
-TCP
-epoll
-Readiness
-Async read/write
-Network cancellation
-Timeouts
-Backpressure
-```
-
----
-
-## Phase 7 — Process Management
-
-Implement:
-
-```text
-runact-process
-```
-
----
-
-## Phase 8 — Runtime Validation
-
-Build:
-
-```text
-TCP echo server
-TCP benchmark server
-fault injection tests
-concurrency tests
-shutdown tests
-```
-
-Do not start HTTP until these are stable.
-
----
-
-## Phase 9 — HTTP
-
-Build:
-
-```text
-runact-web
-```
-
-Start with:
-
-```text
-HTTP/1.1
-Request
-Response
-Headers
-Parser
-Encoder
-```
-
----
-
-## Phase 10 — Web Framework
-
-Add:
-
-```text
-Router
-Handlers
-Middleware
-Extractors
-Streaming
-Static files
-```
-
----
-
-## Phase 11 — WebSocket
-
-Add:
-
-```text
-Upgrade
-Frames
-Connection lifecycle
-Streaming
-Backpressure
-Cancellation
-```
-
----
-
-## Phase 12 — Real Applications
-
-Build:
-
-```text
-REST API
-WebSocket server
-AI agent server
-Remote PaperOS server
-```
+**Phase 13 — Real Applications** (see roadmap.md)
+- REST API, WebSocket server, AI agent server, Remote PaperOS server
 
 ---
 

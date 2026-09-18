@@ -1019,7 +1019,7 @@ runact/
 └── io          # optional, only if native OS I/O is ever needed
 ```
 
-These are conceptual boundaries. The project is a single crate.
+These are conceptual boundaries. The runact core is a single crate. Higher-level layers (e.g., `runact-web`) are separate workspace members that depend on the core.
 
 ---
 
@@ -1308,7 +1308,11 @@ PaperOS-specific concepts must not enter Runact core.
 
 ## 36. Development Order
 
-Recommended implementation order (v1.0.0):
+Development phases are tracked in [Roadmap](roadmap.md). The roadmap is the authoritative source for phase numbering and status.
+
+### Implementation Strategy
+
+The recommended implementation order for the core runtime (v1.0.0) was:
 
 ```text
 1. Actor abstraction
@@ -1333,21 +1337,23 @@ Recommended implementation order (v1.0.0):
 
 Do not add distributed actors or a complex plugin system before the local runtime semantics are stable.
 
-### Async Runtime (planned)
+### Async Runtime
 
-After the v1.0.0 actor core is stable, implement the async runtime in the order defined by the [Async Runtime](async-runtime.md) boundary document (its §20 implementation strategy):
+The async runtime was implemented in the order defined by the [Async Runtime](async-runtime.md) §20:
 
 ```text
-1. Task, TaskHandle, Executor, future polling
-2. Runact waker, runnable queue, wake deduplication
-3. Async task scheduler integration
-4. CancellationToken, task cancellation
-5. Timers: sleep(), timeout()
-6. Actor → spawn async task → result message
-7. Task groups (structured concurrency)
-8. Compute pool separation
+1. Task, TaskHandle, Executor, future polling ✅
+2. Runact waker, runnable queue, wake deduplication ✅
+3. Async task scheduler integration ✅
+4. CancellationToken, task cancellation ✅
+5. Timers: sleep(), timeout() ✅
+6. Actor → spawn async task → result message ✅
+7. Task groups (structured concurrency) ✅
+8. Compute pool separation (shared with actor pool)
 9. Optional runtime adapters (e.g. Tokio) only when required
 ```
+
+See [Roadmap](roadmap.md) for current status and next phases.
 
 ---
 
@@ -1414,6 +1420,7 @@ thiserror = "1"  # Error handling
 ```text
 runact/
 ├── Cargo.toml
+├── Cargo.lock
 ├── README.md
 ├── CHANGELOG.md
 ├── LICENSE
@@ -1434,7 +1441,8 @@ runact/
 │   ├── agents.md
 │   ├── object-model.md
 │   ├── protocol.md
-│   ├── runtime-networking-plan.md  # Runtime + Networking extension plan
+│   ├── development-plan.md       # Full platform architecture
+│   ├── runtime-networking-plan.md # Runtime + Networking extension plan
 │   ├── adr/
 │   │   ├── 0000-template.md
 │   │   ├── 0001-beam-style-scheduler.md
@@ -1456,7 +1464,12 @@ runact/
 │   ├── task/           # Async task execution (v1.1.0)
 │   ├── timer/
 │   ├── resource/
+│   ├── net/            # TCP reactor, TcpListener, TcpStream (v1.2.0)
+│   ├── process/        # Process spawn, stdin/stdout/stderr (v1.2.0)
 │   └── runtime.rs
+├── runact-web/         # HTTP layer (separate workspace member)
+│   ├── Cargo.toml
+│   └── src/
 ├── examples/
 │   └── counter.rs
 ├── benches/
@@ -1468,23 +1481,59 @@ runact/
     ├── resource.rs
     ├── scheduler.rs
     ├── timer.rs
-    └── async_executor.rs
+    ├── async_executor.rs
+    ├── async_timers.rs
+    ├── cancellation.rs
+    ├── actor_task_integration.rs
+    ├── process_runtime.rs
+    ├── reactor.rs
+    ├── tcp_api.rs
+    └── stress.rs
 ```
 
-### Future Crate Architecture (planned)
+### Workspace Architecture
 
-When the runtime extends to networking and process management, the conceptual crate separation will be:
+The repository uses a Cargo workspace. The core runtime is a single crate. Higher-level layers are separate workspace members.
 
 ```text
 runact/
-├── runact-core/      # actors, mailbox, scheduler, supervision
-├── runact-runtime/   # executor, tasks, wakers, cancellation, timers
-├── runact-compute/   # CPU-heavy work pool
-├── runact-net/       # TCP, reactor, readiness, sockets
-└── runact-process/   # process lifecycle, stdin/stdout/stderr
+├── Cargo.toml          # workspace root
+├── src/                # runact core (actors, tasks, net, process, compute)
+├── tests/
+├── runact-web/         # HTTP layer (separate crate, depends on runact)
+└── docs/
 ```
 
-The exact crate boundaries may change during implementation, but the conceptual separation should remain.
+The core crate (`runact`) owns:
+
+```text
+Actor system
+Scheduler
+Async tasks
+Future polling
+Wakers
+Cancellation
+Timers
+Task groups
+Supervision
+Compute pool
+TCP networking
+Process management
+Backpressure
+Shutdown
+```
+
+Higher-level crates (e.g., `runact-web`) own:
+
+```text
+HTTP
+WebSocket
+Routing
+Middleware
+Extractors
+```
+
+The exact crate boundaries may evolve, but the conceptual separation remains: core owns execution/lifecycle, higher-level crates own protocols.
 
 ## See Also
 

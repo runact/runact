@@ -1,10 +1,12 @@
 # Runact Extensions
 
-> **Status:** Planned feature. Not yet implemented in v1.0.0. This document describes the intended extension system for the PaperOS runtime built on top of Runact.
+> **Status:** Design document. This document describes how to build extension systems on top of Runact's actor and process primitives.
 
 ## Overview
 
-The Runact extension system allows external components to interact with the runtime through a versioned, capability-controlled protocol. Extensions run as separate processes and communicate through message passing.
+The Runact extension pattern allows external components to interact with the runtime through a versioned, capability-controlled protocol. Extensions run as separate processes and communicate through message passing.
+
+This pattern applies to any web application that needs plugin architectures: extensible API gateways, middleware systems, or modular backends where components are developed and deployed independently.
 
 ## Architecture
 

@@ -838,215 +838,24 @@ For the first native networking implementation, do not introduce Tokio just to i
 
 ## 27. Development Phases
 
-### Phase 1 — Async Foundation
+Development phases are tracked in [Roadmap](roadmap.md). The roadmap is the authoritative source for phase numbering and status.
 
-Implement:
+This document describes the architecture and design for the runtime + networking extension. For implementation status, see the roadmap.
 
-```text
-Task
-TaskHandle
-Executor
-Future polling
-Waker
-Runnable queue
-```
+### Phase 9 — Runtime + Networking Extension (roadmap.md)
 
-Success condition:
+This phase extends Runact with TCP networking, process runtime, cancellation, task groups, and async timers. All sub-phases are complete:
 
-```text
-multiple futures execute correctly
-```
+- **9a** — Cancellation & Task Groups ✅
+- **9b** — Timers ✅
+- **9c** — Actor ↔ Async Integration ✅
+- **9d** — Process Runtime ✅
+- **9e** — TCP Reactor ✅
+- **9f** — Stress Testing ✅
 
-**Status:** ✅ Complete (src/task/ module, 9 acceptance tests)
+### Next: Phase 10 — HTTP (roadmap.md)
 
----
-
-### Phase 2 — Cancellation
-
-Implement:
-
-```text
-CancellationToken
-Task cancellation
-TaskGroup
-```
-
-Success condition:
-
-```text
-parent cancellation reaches all children
-```
-
----
-
-### Phase 3 — Timers
-
-Implement:
-
-```text
-sleep()
-timeout()
-```
-
-Success condition:
-
-```text
-pending timers consume no worker execution time
-```
-
----
-
-### Phase 4 — Actor Integration
-
-Implement:
-
-```text
-actor → spawn task
-task → actor message
-```
-
-Success condition:
-
-```text
-actor remains responsive while task waits
-```
-
----
-
-### Phase 5 — Compute Pool
-
-Implement:
-
-```text
-compute()
-```
-
-Success condition:
-
-```text
-CPU-heavy work cannot starve async tasks
-```
-
-**Status:** ✅ Complete (src/compute/ module, 7 acceptance tests)
-
----
-
-### Phase 6 — Process Runtime
-
-Implement:
-
-```text
-spawn
-stdin
-stdout
-stderr
-exit
-cancel
-timeout
-```
-
-Success condition:
-
-```text
-cancelled agent cannot leave orphaned processes
-```
-
----
-
-### Phase 7 — TCP Reactor
-
-Implement:
-
-```text
-epoll
-reactor
-readiness
-Waker integration
-```
-
-Success condition:
-
-```text
-TcpStream can asynchronously wait for readiness
-```
-
----
-
-### Phase 8 — TCP API
-
-Implement:
-
-```text
-TcpListener
-TcpStream
-connect
-accept
-read
-write
-shutdown
-```
-
-Success condition:
-
-```text
-multiple concurrent TCP connections work without blocking workers
-```
-
----
-
-### Phase 9 — Stress Testing
-
-Test:
-
-```text
-1,000 connections
-10,000 connections
-many concurrent reads
-many concurrent writes
-slow clients
-fast clients
-connection cancellation
-timeouts
-large payloads
-partial writes
-partial reads
-connection failures
-```
-
----
-
-### Phase 10 — Remote Agent Prototype
-
-Build outside Runact:
-
-```text
-Agent Gateway
-HTTP
-WebSocket
-AgentActor
-LLM client
-Tool system
-```
-
-Use Runact underneath.
-
-Success condition:
-
-```text
-PaperOS
-   ↓
-Remote Agent
-   ↓
-Runact
-   ↓
-LLM
-   ↓
-Tool execution
-   ↓
-streamed result
-   ↓
-PaperOS
-```
+Build `runact-web` as a separate workspace member. See [Development Plan](development-plan.md) §48 for architectural details.
 
 ---
 
@@ -1137,25 +946,24 @@ runtime shutdown
 
 ## 30. Architectural Invariants
 
-These must remain true:
+The canonical invariant set is in [Architecture](architecture.md) §35. The networking-relevant invariants are:
 
 1. Runact is not an HTTP framework.
 2. Runact is not a WebSocket framework.
 3. Runact is not a TLS library.
 4. Runact is not an AI framework.
-5. Runact is not a shell/terminal framework.
-6. Runact executes standard Rust futures.
-7. Actors and async tasks remain distinct concepts.
-8. CPU-heavy work uses the compute pool.
-9. Async I/O never blocks an actor worker.
-10. Cancellation is cooperative.
-11. Structured concurrency prevents orphaned tasks.
-12. Process cancellation prevents orphaned child processes.
-13. TCP is the lowest-level network primitive in Runact.
-14. HTTP/WebSocket remain outside Runact.
-15. Tokio is optional, not fundamental.
-16. Runact must remain useful independently of PaperOS.
-17. PaperOS-specific concepts must not enter Runact core.
+5. Runact executes standard Rust futures.
+6. Actors and async tasks remain distinct concepts.
+7. CPU-heavy work uses the compute pool.
+8. Async I/O never blocks an actor worker.
+9. Cancellation is cooperative.
+10. Structured concurrency prevents orphaned tasks.
+11. Process cancellation prevents orphaned child processes.
+12. TCP is the lowest-level network primitive in Runact.
+13. HTTP/WebSocket remain outside Runact.
+14. Tokio is optional, not fundamental.
+
+See [Architecture §35](architecture.md#35-architectural-invariants) for the full set (27 invariants).
 
 ---
 

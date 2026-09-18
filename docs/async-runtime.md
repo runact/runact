@@ -292,16 +292,27 @@ The adapter isolates Tokio from the Runact core.
 
 ---
 
-# 9. Do Not Expose I/O APIs From Runact
+# 9. What Belongs Where
 
-Avoid APIs such as:
+Runact core provides:
 
-```rust
-runact::net::TcpStream
-runact::http::Client
-runact::websocket::WebSocket
-runact::dns::Resolver
+```text
+TCP networking (TcpListener, TcpStream, Reactor)
+Process management (spawn, stdin/stdout/stderr)
 ```
+
+These are fundamental runtime primitives. TCP is the lowest-level network primitive; process management is required for AI agents and system integration.
+
+Avoid application-level protocols in Runact core:
+
+```text
+HTTP
+WebSocket
+TLS
+DNS
+```
+
+These belong to specialized libraries or higher-level crates (e.g., `runact-web`).
 
 Instead expose generic execution APIs:
 
@@ -783,7 +794,7 @@ Stress test the scheduler under mixed workloads.
 
 # 22. Architectural Invariants
 
-These rules must remain true:
+The canonical invariant set is in [Architecture](architecture.md) §35. The async-runtime-relevant invariants are:
 
 1. Runact core does not implement HTTP.
 2. Runact core does not implement WebSocket.
@@ -798,8 +809,8 @@ These rules must remain true:
 11. Task lifecycle is observable.
 12. Runtime shutdown is structured.
 13. External I/O libraries remain replaceable.
-14. PaperOS-specific functionality does not enter Runact.
-15. Runact remains useful independently of PaperOS.
+
+See [Architecture §35](architecture.md#35-architectural-invariants) for the full set (27 invariants).
 
 ---
 

@@ -5,6 +5,26 @@ All notable changes to Runact will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-16
+
+### Added
+
+- **Cancellation** — `CancellationToken` with parent→child propagation for cooperative async task cancellation.
+- **Task groups** — `TaskGroup` for structured concurrency: scoped task lifetimes, automatic cleanup on scope exit.
+- **Sleep & timeout** — `Runtime::sleep()` and `Runtime::timeout()` as associated functions using crossbeam channels (no Tokio).
+- **Actor ↔ async integration** — actors can `spawn_task` and receive results via `TaskHandle`; async tasks can send messages to actors.
+- **Process runtime** — `ProcessSpawnOptions`, `ProcessHandle`, `ProcessOutput` for spawning OS processes with stdin/stdout/stderr, exit status, timeout, and cancellation.
+- **TCP reactor** — `Reactor` using raw Linux `epoll` for OS readiness integration. `Interest`, `Readiness` types.
+- **TCP API** — `TcpListener`, `TcpStream` with `bind`, `accept`, `connect`, `read`, `write`, `read_exact`, `read_to_end`, `shutdown`.
+- **Stress tests** — 3 stress tests validating 100+ concurrent TCP connections.
+
+### Changed
+
+- `async-runtime.md` §9 updated: TCP networking IS in Runact core; HTTP/WebSocket/TLS/DNS are outside.
+- `architecture.md` §29 updated: workspace approach (runact core + runact-web member).
+- `development-plan.md` §48 references roadmap.md as authoritative phase source.
+- `runtime-networking-plan.md` §27 references roadmap.md as authoritative phase source.
+
 ## [1.1.0] - 2026-09-16
 
 ### Added
@@ -39,12 +59,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Architecture
 
-- Single crate (no workspace).
+- Workspace approach: `runact` core crate + `runact-web` as workspace member.
 - No Tokio dependency — own runtime semantics.
 - `crossbeam-channel` for mailboxes and inter-thread communication.
 - `tracing` for structured logging.
 - `thiserror` for error types.
 - `serde` with `derive` feature for message serialization.
+- Raw Linux `epoll` for TCP reactor (no Mio).
 
 ## [0.1.0] - 2026-08-01
 

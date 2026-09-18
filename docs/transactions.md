@@ -1,10 +1,12 @@
 # Runact Transactions
 
-> **Status:** Planned feature. Not yet implemented in v1.0.0. This document describes the intended transaction system for the PaperOS runtime built on top of Runact.
+> **Status:** Design document. This document describes how to build transaction systems on top of Runact's actor messaging primitives.
 
 ## Overview
 
-Transactions ensure atomic, consistent, and auditable state mutations. This is critical for AI agent integration where changes must be previewed, approved, and tracked.
+Transactions ensure atomic, consistent, and auditable state mutations. This is critical for systems where changes must be previewed, approved, and tracked.
+
+This pattern applies to any web application that needs audit trails: payment processing, multi-step form submissions, workflow orchestration, or AI agent tool execution with human-in-the-loop approval.
 
 ## Purpose
 

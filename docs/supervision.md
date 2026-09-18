@@ -11,22 +11,23 @@ Runact provides BEAM-inspired supervision. Supervisors manage actor lifecycle an
 ## Supervision Tree
 
 ```text
-EditorSupervisor
+WebAppSupervisor
 │
-├── UISupervisor
-│   └── UIActor
+├── HttpSupervisor
+│   ├── ConnectionHandler
+│   ├── ConnectionHandler
+│   └── ConnectionHandler
 │
-├── BufferSupervisor
-│   ├── BufferActor
-│   ├── BufferActor
-│   └── BufferActor
+├── DbSupervisor
+│   ├── PoolManager
+│   └── QueryExecutor
 │
-├── LspSupervisor
-│   ├── RustAnalyzer
-│   └── TypeScriptServer
+├── CacheSupervisor
+│   └── CacheActor
 │
-└── TerminalSupervisor
-    └── ShellActor
+└── WorkerSupervisor
+    ├── BackgroundJob
+    └── BackgroundJob
 ```
 
 ## Creating a Supervisor

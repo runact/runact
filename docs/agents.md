@@ -1,10 +1,12 @@
 # Runact Agents
 
-> **Status:** Planned feature. Not yet implemented in v1.0.0. This document describes the intended agent system for the PaperOS runtime built on top of Runact.
+> **Status:** Design document. This document describes how to build agent systems on top of Runact's actor primitives.
 
 ## Overview
 
 Agents in Runact are runtime entities that interact with the system through a controlled, auditable interface. An agent is NOT the LLM itself — it is an actor that wraps an LLM adapter and executes operations through the standard message system.
+
+This pattern applies to any web application that needs to manage AI agent lifecycles: chatbots, autonomous coding assistants, tool-using agents, or multi-agent orchestration systems.
 
 ## Architecture
 
