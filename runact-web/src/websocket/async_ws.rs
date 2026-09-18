@@ -28,7 +28,7 @@
 use crate::websocket::frame::{Frame, FrameError, OpCode};
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::mpsc::{self, RecvTimeoutError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -41,6 +41,35 @@ pub enum Message {
     Closed,
     /// An I/O or framing error occurred.
     Error(FrameError),
+}
+
+/// Error returned when sending a frame fails.
+#[derive(Debug)]
+pub enum SendError {
+    /// The writer channel is full (backpressure).
+    Full,
+    /// The connection has been closed.
+    Closed,
+}
+
+impl std::fmt::Display for SendError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendError::Full => write!(f, "send channel full (backpressure)"),
+            SendError::Closed => write!(f, "connection closed"),
+        }
+    }
+}
+
+impl std::error::Error for SendError {}
+
+impl<T> From<TrySendError<T>> for SendError {
+    fn from(e: TrySendError<T>) -> Self {
+        match e {
+            TrySendError::Full(_) => SendError::Full,
+            TrySendError::Disconnected(_) => SendError::Closed,
+        }
+    }
 }
 
 /// Direction for outgoing writes.
@@ -62,17 +91,20 @@ pub struct AsyncWriter {
 impl AsyncWriter {
     /// Send a frame to the peer. Non-blocking.
     ///
-    /// Returns `Err(())` if the writer channel is full (backpressure) or the
-    /// receiver has been dropped (connection closed).
-    pub fn send(&self, frame: &Frame) -> Result<(), ()> {
+    /// Returns `Err(SendError::Full)` if the writer channel is full
+    /// (backpressure) or `Err(SendError::Closed)` if the receiver has been
+    /// dropped (connection closed).
+    pub fn send(&self, frame: &Frame) -> Result<(), SendError> {
         self.tx
             .try_send(Outbound::Frame(frame.clone()))
-            .map_err(|_| ())
+            .map_err(Into::into)
     }
 
     /// Send a close frame with the given status code. Non-blocking.
-    pub fn send_close(&self, status: u16) -> Result<(), ()> {
-        self.tx.try_send(Outbound::Close(status)).map_err(|_| ())
+    pub fn send_close(&self, status: u16) -> Result<(), SendError> {
+        self.tx
+            .try_send(Outbound::Close(status))
+            .map_err(Into::into)
     }
 
     /// Signal the writer thread to stop and close the connection.

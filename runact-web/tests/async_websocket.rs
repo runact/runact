@@ -267,9 +267,9 @@ fn test_async_websocket_full_roundtrip() {
     let writer = ws.get_writer();
 
     // Receive frames and echo text, handle close
-    loop {
-        match rx.recv_timeout(Duration::from_secs(5)) {
-            Ok(Message::Frame(f)) => match f.opcode {
+    while let Ok(msg) = rx.recv_timeout(Duration::from_secs(5)) {
+        match msg {
+            Message::Frame(f) => match f.opcode {
                 OpCode::Text => {
                     let reply = Frame {
                         fin: true,
@@ -291,7 +291,7 @@ fn test_async_websocket_full_roundtrip() {
                 }
                 _ => {}
             },
-            Ok(Message::Closed) | Ok(Message::Error(_)) | Err(_) => break,
+            Message::Closed | Message::Error(_) => break,
         }
     }
 

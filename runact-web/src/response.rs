@@ -104,7 +104,7 @@ impl StatusCode {
             500 => Ok(StatusCode::InternalServerError),
             502 => Ok(StatusCode::BadGateway),
             503 => Ok(StatusCode::ServiceUnavailable),
-            n if n >= 100 && n < 600 => Ok(StatusCode::Custom(n)),
+            n if (100..600).contains(&n) => Ok(StatusCode::Custom(n)),
             _ => Err(HttpError::MalformedStartLine(format!(
                 "invalid status code: {code}"
             ))),
