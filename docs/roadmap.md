@@ -241,6 +241,11 @@ Remote PaperOS server
 - Built on the `RunactTcpStream` bridge from Phase 12
 - Integration test `ws_agent_server.rs` verifies end-to-end WebSocket echo through the actor
 
+**REST API** — `examples/agent_api.rs` demonstrates a REST API server using `Router` with runact's `TcpListener`:
+- CRUD endpoints for agent sessions (`GET/POST /api/agents`, `GET/DELETE /api/agents/:id`)
+- Shared `SessionStore` behind `Arc<Mutex<...>>` (would be an Actor in production)
+- Integration test `ws_agent_api.rs` verifies all endpoints (status, create, get, delete, 404)
+
 See [Development Plan](development-plan.md) §48 Phase 12.
 
 ---
