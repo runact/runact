@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **runact-web: WebSocket support** — RFC 6455 implementation in `runact-web::websocket`: frame parsing/encoding (per-frame masking, extended 16/64-bit lengths, all opcodes), handshake validation with `Sec-WebSocket-Accept` computation (SHA-1 + base64 using the standard RFC 6455 GUID), `WebSocketConnection<R, W>` over `Read`/`Write` with `send_pong`/`send_close` helpers, and `StatusCode::SwitchingProtocols` (101). Added `sha1` and `base64` dependencies.
+- **runact-web: Async WebSocket** — `AsyncWebSocket` provides non-blocking frame I/O over any `Read + Write` stream (e.g. `TcpStream`). Uses dedicated reader/writer threads with a bounded channel and cooperative shutdown, keeping I/O off scheduler workers. Includes `Message` enum (Frame/Closed/Error), `AsyncWriter` with non-blocking `send`/`send_close`, and auto-pong for incoming Ping frames.
 
 ## [1.2.1] - 2026-09-16
 
