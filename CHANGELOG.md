@@ -5,6 +5,15 @@ All notable changes to Runact will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-09-16
+
+### Changed
+
+- **Documentation** — comprehensive getting-started guide covering all v1.2.0 features (actors, async tasks, cancellation, process management, TCP networking).
+- **Documentation** — reframed PaperOS-specific docs as Runact design patterns for web apps.
+- **Documentation** — fixed architecture/async-runtime/development-plan inconsistencies.
+- **Documentation** — updated supervision example to web-app-relevant scenario.
+
 ## [1.2.0] - 2026-09-16
 
 ### Added
