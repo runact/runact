@@ -71,13 +71,7 @@ fn test_request_construction() {
     headers.insert("Host", "example.com");
     headers.insert("Accept", "application/json");
 
-    let req = Request {
-        method: Method::Get,
-        path: "/api/status".to_string(),
-        version: "HTTP/1.1".to_string(),
-        headers,
-        body: vec![],
-    };
+    let req = Request::new(Method::Get, "/api/status", "HTTP/1.1").with_headers(headers);
 
     assert_eq!(req.method, Method::Get);
     assert_eq!(req.path, "/api/status");
@@ -108,13 +102,7 @@ fn test_request_encode() {
     let mut headers = Headers::new();
     headers.insert("Host", "example.com");
 
-    let req = Request {
-        method: Method::Get,
-        path: "/".to_string(),
-        version: "HTTP/1.1".to_string(),
-        headers,
-        body: vec![],
-    };
+    let req = Request::new(Method::Get, "/", "HTTP/1.1").with_headers(headers);
 
     let encoded = req.encode();
     let expected = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
@@ -127,13 +115,9 @@ fn test_request_encode_with_body() {
     headers.insert("Content-Type", "text/plain");
     headers.insert("Content-Length", "5");
 
-    let req = Request {
-        method: Method::Post,
-        path: "/submit".to_string(),
-        version: "HTTP/1.1".to_string(),
-        headers,
-        body: b"hello".to_vec(),
-    };
+    let req = Request::new(Method::Post, "/submit", "HTTP/1.1")
+        .with_headers(headers)
+        .with_body(b"hello".to_vec());
 
     let encoded = req.encode();
     assert!(encoded.starts_with(b"POST /submit HTTP/1.1\r\n"));

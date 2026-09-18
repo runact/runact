@@ -57,9 +57,33 @@ pub struct Request {
     pub version: String,
     pub headers: Headers,
     pub body: Vec<u8>,
+    /// Extracted path parameters from router (e.g., `:id` → value).
+    params: Vec<(String, String)>,
 }
 
 impl Request {
+    /// Create a new request with the given method, path, and version.
+    pub fn new(method: Method, path: &str, version: &str) -> Self {
+        Self {
+            method,
+            path: path.to_string(),
+            version: version.to_string(),
+            headers: Headers::new(),
+            body: vec![],
+            params: Vec::new(),
+        }
+    }
+
+    pub fn with_headers(mut self, headers: Headers) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    pub fn with_body(mut self, body: Vec<u8>) -> Self {
+        self.body = body;
+        self
+    }
+
     /// Parse an HTTP/1.1 request from raw bytes.
     ///
     /// Validates:
@@ -103,6 +127,7 @@ impl Request {
             version,
             headers: hdrs,
             body: body.to_vec(),
+            params: Vec::new(),
         })
     }
 
@@ -114,5 +139,18 @@ impl Request {
         let mut bytes = out.into_bytes();
         bytes.extend_from_slice(&self.body);
         bytes
+    }
+
+    /// Get a path parameter value by name (set by the router).
+    pub fn param(&self, name: &str) -> Option<&str> {
+        self.params
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Set path parameters (used internally by the router).
+    pub(crate) fn set_params(&mut self, params: Vec<(String, String)>) {
+        self.params = params;
     }
 }
