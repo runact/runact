@@ -57,20 +57,25 @@ pub struct Request {
     pub version: String,
     pub headers: Headers,
     pub body: Vec<u8>,
-    /// Extracted path parameters from router (e.g., `:id` → value).
     params: Vec<(String, String)>,
+    query_string: Option<String>,
 }
 
 impl Request {
     /// Create a new request with the given method, path, and version.
     pub fn new(method: Method, path: &str, version: &str) -> Self {
+        let (clean_path, query_string) = match path.find('?') {
+            Some(pos) => (path[..pos].to_string(), Some(path[pos + 1..].to_string())),
+            None => (path.to_string(), None),
+        };
         Self {
             method,
-            path: path.to_string(),
+            path: clean_path,
             version: version.to_string(),
             headers: Headers::new(),
             body: vec![],
             params: Vec::new(),
+            query_string,
         }
     }
 
@@ -128,6 +133,7 @@ impl Request {
             headers: hdrs,
             body: body.to_vec(),
             params: Vec::new(),
+            query_string: None,
         })
     }
 
@@ -149,8 +155,24 @@ impl Request {
             .map(|(_, v)| v.as_str())
     }
 
+    pub(crate) fn params_ref(&self) -> &[(String, String)] {
+        &self.params
+    }
+
     /// Set path parameters (used internally by the router).
     pub(crate) fn set_params(&mut self, params: Vec<(String, String)>) {
         self.params = params;
+    }
+
+    pub fn set_query_string(&mut self, qs: &str) {
+        self.query_string = Some(qs.to_string());
+    }
+
+    pub fn query_string(&self) -> Option<&str> {
+        self.query_string.as_deref()
+    }
+
+    pub fn headers_mut(&mut self) -> &mut Headers {
+        &mut self.headers
     }
 }

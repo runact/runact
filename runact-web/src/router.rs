@@ -1,5 +1,6 @@
 //! HTTP request router with pattern matching and path parameters.
 
+use crate::middleware::{Middleware, Next};
 use crate::request::{Method, Request};
 use crate::response::{Response, StatusCode};
 
@@ -92,6 +93,7 @@ struct RouteEntry {
 pub struct Router {
     routes: Vec<RouteEntry>,
     not_found: Option<Box<dyn Handler>>,
+    middlewares: Vec<Box<dyn Middleware>>,
 }
 
 impl Router {
@@ -100,6 +102,7 @@ impl Router {
         Self {
             routes: Vec::new(),
             not_found: None,
+            middlewares: Vec::new(),
         }
     }
 
@@ -117,12 +120,14 @@ impl Router {
         });
     }
 
-    /// Set a custom handler for unmatched routes (404).
     pub fn not_found<H: Handler>(&mut self, handler: H) {
         self.not_found = Some(Box::new(handler));
     }
 
-    /// Handle an incoming request by finding the matching route.
+    pub fn middleware<M: Middleware>(&mut self, mw: M) {
+        self.middlewares.push(Box::new(mw));
+    }
+
     pub fn handle(&self, mut req: Request) -> Response {
         let path_segments = split_path(&req.path);
 
@@ -132,7 +137,7 @@ impl Router {
             }
             if let Some(params) = try_match(&entry.segments, &path_segments) {
                 req.set_params(params);
-                return entry.handler.handle(req);
+                return run_middleware_chain(&self.middlewares, entry.handler.as_ref(), req);
             }
         }
 
@@ -200,4 +205,29 @@ fn try_match(pattern: &[Segment], request: &[&str]) -> Option<Vec<(String, Strin
         }
     }
     Some(params)
+}
+
+fn run_middleware_chain(
+    middlewares: &[Box<dyn Middleware>],
+    handler: &dyn Handler,
+    req: Request,
+) -> Response {
+    if middlewares.is_empty() {
+        return handler.handle(req);
+    }
+
+    fn recurse(
+        middlewares: &[Box<dyn Middleware>],
+        handler: &dyn Handler,
+        req: Request,
+    ) -> Response {
+        if let Some((first, rest)) = middlewares.split_first() {
+            let next = Next::new(move |req| recurse(rest, handler, req));
+            first.handle(req, next)
+        } else {
+            handler.handle(req)
+        }
+    }
+
+    recurse(middlewares, handler, req)
 }
