@@ -11,9 +11,10 @@ This document outlines the development phases for Runact. Runact is the runtime;
 | Component | Status | Tests |
 |-----------|--------|-------|
 | **Runact** (runtime) | v1.2.1 | 108 tests across actor, async, cancellation, compute, observability, process, reactor, resource, scheduler, stress, tcp_api, timer |
-| **runact-web** (HTTP) | v0.1.0 | 34 tests for HTTP Request, Response, Headers |
+| **runact-web** (HTTP) | v0.1.0 | 34 tests for HTTP Request, Response, Headers; 32 WebSocket tests (frame, async, server, chat, runact bridge) |
 | **Phase 9** (Runtime + Networking) | ✅ Complete | cancellation, timers, actor-async integration, process runtime, TCP reactor, TCP API, stress tests |
 | **Phase 10** (HTTP) | ✅ Complete | HTTP/1.1 parsing, request/response types, headers |
+| **Phase 12** (WebSocket) | ✅ Complete | Upgrade, frames, connection lifecycle, async I/O, heartbeats, runact TCP bridge, examples |
 
 **Paper** (editor) — Separate project, tracked at `paper/docs/roadmap.md`
 
@@ -202,6 +203,20 @@ Streaming
 Backpressure
 Cancellation
 ```
+
+### Status: ✅ Complete
+
+Implemented:
+- ✅ RFC 6455 frame parsing/encoding (all opcodes, masking, extended lengths)
+- ✅ WebSocket handshake (`Sec-WebSocket-Accept` with SHA-1 + base64)
+- ✅ `WebSocketServer` — generic over `S: Read + Write + SetReadTimeout + Send + 'static`
+- ✅ `AsyncWebSocket` — non-blocking frame I/O with reader/writer/ping threads
+- ✅ `ConnectionWriter` with `send_text`, `send_binary`, `send_close`, `send_ping`, `send_pong`
+- ✅ `WebSocketConfig` with `ping_interval` for heartbeat support
+- ✅ `RunactTcpStream` adapter bridging `runact::net::tcp_api::TcpStream` to `Read`/`Write`
+- ✅ `ServerEvent` enum (`Connected`, `Frame`, `Closed`, `Error`)
+- ✅ Example binaries: `websocket_echo.rs`, `websocket_chat.rs`
+- ✅ Tests: `ws_server.rs` (4), `async_websocket.rs` (5), `websocket.rs` (21), `ws_chat.rs` (1), `ws_runact_bridge.rs` (1)
 
 See [Development Plan](development-plan.md) §48 Phase 11.
 

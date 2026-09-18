@@ -853,9 +853,13 @@ This phase extends Runact with TCP networking, process runtime, cancellation, ta
 - **9e** — TCP Reactor ✅
 - **9f** — Stress Testing ✅
 
-### Next: Phase 10 — HTTP (roadmap.md)
+### Next: Phase 12 — WebSocket (roadmap.md)
 
-Build `runact-web` as a separate workspace member. See [Development Plan](development-plan.md) §48 for architectural details.
+Phase 10 (HTTP) and Phase 11 (Web Framework) are complete in `runact-web`.
+Phase 12 (WebSocket) is complete: RFC 6455 frame parsing/encoding, handshake
+validation, `WebSocketServer` generic over stream type, `AsyncWebSocket` with
+non-blocking reader/writer/ping threads, `RunactTcpStream` adapter bridging
+runact's `TcpStream`, and example binaries.
 
 ---
 

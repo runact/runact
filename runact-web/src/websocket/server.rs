@@ -11,15 +11,31 @@
 //! use runact_web::websocket::server::WebSocketServer;
 //! use std::net::TcpStream;
 //!
-//! let stream: TcpStream = /* from accept() */;
+//! let stream: TcpStream = /* from accept() */
 //! let mut server = WebSocketServer::bind(stream, "/ws").unwrap();
-//! server.accept_with_callback(|event| {
-//!     match event {
-//!         runact_web::websocket::server::ServerEvent::Frame(f) => {
-//!             // echo text frames
-//!         }
-//!         _ => {}
-//!     }
+//! server.accept_with_callback(|writer, event| {
+//!     // handle incoming frames via `event`, reply via `writer`
+//! });
+//! ```
+//!
+//! For connections from the runact TCP runtime, wrap with
+//! [`RunactTcpStream`](crate::websocket::runact_tcp::RunactTcpStream) which
+//! implements `Read` + `Write`:
+//!
+//! ```no_run
+//! use runact::net::tcp_api::TcpListener;
+//! use runact_web::websocket::runact_tcp::RunactTcpStream;
+//! use runact_web::websocket::server::WebSocketServer;
+//! # use std::io::{Read, Write};
+//! # use std::thread;
+//!
+//! let listener = TcpListener::bind("127.0.0.1:8080").unwrap();
+//! let (stream, _) = listener.accept().unwrap();
+//! let adapter = RunactTcpStream(stream);
+//!
+//! let mut server = WebSocketServer::bind(adapter, "/ws").unwrap();
+//! server.accept_with_callback(|_writer, _event| {
+//!     // handle WebSocket messages on runact-managed TCP
 //! });
 //! ```
 
@@ -28,8 +44,22 @@ use crate::websocket::async_ws::{AsyncWebSocket, AsyncWriter, Message, SendError
 use crate::websocket::frame::{Frame, OpCode};
 use crate::websocket::upgrade::{UpgradeError, build_accept_key, validate_upgrade_request};
 use std::io::{Read, Write};
-use std::net::TcpStream as StdTcpStream;
 use std::sync::mpsc;
+use std::time::Duration;
+
+/// Helper trait for streams that support read timeouts.
+/// `std::net::TcpStream` implements this; adapters that wrap a `TcpStream`
+/// can delegate to the inner stream's `set_read_timeout`.
+pub trait SetReadTimeout {
+    /// Set the read timeout for the stream.
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> std::io::Result<()>;
+}
+
+impl SetReadTimeout for std::net::TcpStream {
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> std::io::Result<()> {
+        std::net::TcpStream::set_read_timeout(self, timeout)
+    }
+}
 
 /// Events delivered to the server callback.
 #[derive(Debug)]
@@ -108,9 +138,9 @@ impl From<AsyncWriter> for ConnectionWriter {
     }
 }
 
-/// State held by the server.
-struct PendingHandshake {
-    stream: StdTcpStream,
+/// State held by the server during the handshake phase.
+struct PendingHandshake<S> {
+    stream: S,
     request: Request,
 }
 
@@ -120,11 +150,15 @@ struct PendingHandshake {
 /// upgrade request. After [`accept`](Self::accept) sends the 101 response,
 /// the server wraps the connection in an [`AsyncWebSocket`] for non-blocking
 /// frame I/O with a caller-provided callback.
-pub struct WebSocketServer {
-    pending: Option<PendingHandshake>,
+///
+/// Generic over the stream type `S` (any `Read + Write + Send + 'static`),
+/// supporting both `std::net::TcpStream` and
+/// [`runact_web::websocket::runact_tcp::RunactTcpStream`].
+pub struct WebSocketServer<S> {
+    pending: Option<PendingHandshake<S>>,
 }
 
-impl std::fmt::Debug for WebSocketServer {
+impl<S> std::fmt::Debug for WebSocketServer<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WebSocketServer")
             .field("has_pending", &self.pending.is_some())
@@ -132,22 +166,26 @@ impl std::fmt::Debug for WebSocketServer {
     }
 }
 
-impl WebSocketServer {
+impl<S> WebSocketServer<S>
+where
+    S: Read + Write + SetReadTimeout + Send + 'static,
+{
     /// Bind a `WebSocketServer` to a TCP stream for the given path.
     ///
     /// Reads the HTTP upgrade request and validates the upgrade headers.
     /// Does NOT send the 101 response — call [`accept`](Self::accept) or
     /// [`accept_with_callback`](Self::accept_with_callback) next.
-    pub fn bind(stream: StdTcpStream, path: &str) -> Result<Self, HandshakeError> {
+    pub fn bind(stream: S, path: &str) -> Result<Self, HandshakeError> {
         let mut stream = stream;
         stream
-            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .set_read_timeout(Some(Duration::from_millis(100)))
             .map_err(|e| HandshakeError::Io(e.to_string()))?;
 
         let mut buf = [0u8; 4096];
-        let n = stream
-            .read(&mut buf)
-            .map_err(|e| HandshakeError::Io(e.to_string()))?;
+        // Read the HTTP upgrade request. For non-blocking streams (e.g.
+        // runact TcpStream wrapped in RunactTcpStream), `read` may return
+        // WouldBlock — retry with a total timeout.
+        let n = Self::read_handshake_request(&mut stream, &mut buf)?;
         let request_str = std::str::from_utf8(&buf[..n])
             .map_err(|e| HandshakeError::InvalidUtf8(e.to_string()))?;
 
@@ -170,6 +208,42 @@ impl WebSocketServer {
                 request: req,
             }),
         })
+    }
+
+    /// Helper: read the HTTP upgrade request with retry for non-blocking streams.
+    ///
+    /// Reads at least one byte; retries on `WouldBlock` until data is available
+    /// or the total timeout elapses.
+    fn read_handshake_request(stream: &mut S, buf: &mut [u8]) -> Result<usize, HandshakeError> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            match stream.read(buf) {
+                Ok(0) => {
+                    // No data yet (non-blocking) — retry if within timeout
+                    if std::time::Instant::now() >= deadline {
+                        return Err(HandshakeError::Io(
+                            "timed out waiting for handshake request".to_string(),
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+                Ok(n) => return Ok(n),
+                Err(ref e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::Interrupted =>
+                {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(HandshakeError::Io(
+                            "timed out waiting for handshake request".to_string(),
+                        ));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                    continue;
+                }
+                Err(e) => return Err(HandshakeError::Io(e.to_string())),
+            }
+        }
     }
 
     /// Complete the WebSocket handshake and return the [`AsyncWebSocket`].
