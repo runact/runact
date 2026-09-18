@@ -5,6 +5,12 @@ All notable changes to Runact will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **runact-web: WebSocket support** — RFC 6455 implementation in `runact-web::websocket`: frame parsing/encoding (per-frame masking, extended 16/64-bit lengths, all opcodes), handshake validation with `Sec-WebSocket-Accept` computation (SHA-1 + base64 using the standard RFC 6455 GUID), `WebSocketConnection<R, W>` over `Read`/`Write` with `send_pong`/`send_close` helpers, and `StatusCode::SwitchingProtocols` (101). Added `sha1` and `base64` dependencies.
+
 ## [1.2.1] - 2026-09-16
 
 ### Changed

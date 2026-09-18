@@ -7,6 +7,8 @@ use crate::headers::{self, Headers, HttpError};
 /// HTTP status code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StatusCode {
+    /// 101 Switching Protocols
+    SwitchingProtocols,
     /// 200 OK
     OK,
     /// 201 Created
@@ -43,6 +45,7 @@ impl StatusCode {
     /// Get the numeric status code.
     pub fn as_u16(self) -> u16 {
         match self {
+            StatusCode::SwitchingProtocols => 101,
             StatusCode::OK => 200,
             StatusCode::Created => 201,
             StatusCode::NoContent => 204,
@@ -64,6 +67,7 @@ impl StatusCode {
     /// Get the canonical reason phrase.
     pub fn reason(self) -> &'static str {
         match self {
+            StatusCode::SwitchingProtocols => "Switching Protocols",
             StatusCode::OK => "OK",
             StatusCode::Created => "Created",
             StatusCode::NoContent => "No Content",
@@ -85,6 +89,7 @@ impl StatusCode {
     /// Parse a status code from a `u16`.
     pub fn from_u16(code: u16) -> Result<Self, HttpError> {
         match code {
+            101 => Ok(StatusCode::SwitchingProtocols),
             200 => Ok(StatusCode::OK),
             201 => Ok(StatusCode::Created),
             204 => Ok(StatusCode::NoContent),

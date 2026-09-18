@@ -9,5 +9,7 @@ repository = "https://github.com/runact/runact"
 
 [dependencies]
 runact = { path = ".." }
+sha1 = "0.10"
+base64 = "0.22"
 
 [dev-dependencies]
