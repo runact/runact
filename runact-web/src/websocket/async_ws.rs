@@ -230,6 +230,10 @@ impl AsyncWebSocket {
         F: Fn(Message),
     {
         let mut buf = vec![0u8; 4096];
+        // Message reassembly state per RFC 6455 §5.4
+        let mut fragmented_opcode: Option<OpCode> = None;
+        let mut fragmented_payload: Vec<u8> = Vec::new();
+
         loop {
             if shutdown.load(Ordering::SeqCst) {
                 break;
@@ -255,24 +259,84 @@ impl AsyncWebSocket {
                 }
                 Ok(n) => {
                     let data = buf[..n].to_vec();
-                    match Frame::parse(&data) {
-                        Ok(frame) => match frame.opcode {
-                            OpCode::Ping => {
-                                callback(Message::Frame(frame.clone()));
-                                // Auto-respond with pong
-                                callback(Message::Frame(Frame {
-                                    fin: true,
-                                    opcode: OpCode::Pong,
-                                    masked: false,
-                                    mask_key: [0; 4],
-                                    payload: frame.payload.clone(),
-                                }));
+                    let mut offset = 0;
+                    while offset < data.len() {
+                        match Frame::parse(&data[offset..]) {
+                            Ok(frame) => {
+                                // Advance offset past this frame
+                                offset += frame_encoded_size(&frame);
+
+                                // Handle control frames: they can interleave with
+                                // fragmented data messages and must be delivered
+                                // immediately without affecting reassembly state.
+                                match frame.opcode {
+                                    OpCode::Ping => {
+                                        callback(Message::Frame(frame.clone()));
+                                        // Auto-respond with pong
+                                        callback(Message::Frame(Frame {
+                                            fin: true,
+                                            opcode: OpCode::Pong,
+                                            masked: false,
+                                            mask_key: [0; 4],
+                                            payload: frame.payload.clone(),
+                                        }));
+                                    }
+                                    OpCode::Pong => {
+                                        callback(Message::Frame(frame));
+                                    }
+                                    OpCode::Close => {
+                                        callback(Message::Frame(frame));
+                                        callback(Message::Closed);
+                                        break;
+                                    }
+                                    OpCode::Text | OpCode::Binary => {
+                                        // Start of a (possibly fragmented) message
+                                        if fragmented_opcode.is_some() {
+                                            // Receiving a new data frame while
+                                            // already in a fragmented message —
+                                            // protocol error per RFC 6455 §5.4
+                                            callback(Message::Error(FrameError::InsufficientData));
+                                            break;
+                                        }
+                                        fragmented_opcode = Some(frame.opcode);
+                                        if frame.fin {
+                                            // Not fragmented — deliver immediately
+                                            callback(Message::Frame(frame));
+                                            fragmented_opcode = None;
+                                        } else {
+                                            // Start of fragmented message
+                                            fragmented_payload = frame.payload.clone();
+                                        }
+                                    }
+                                    OpCode::Continuation => {
+                                        if let Some(opcode) = fragmented_opcode {
+                                            fragmented_payload.extend_from_slice(&frame.payload);
+                                            if frame.fin {
+                                                // End of fragmented message — deliver reassembled
+                                                callback(Message::Frame(Frame {
+                                                    fin: true,
+                                                    opcode,
+                                                    masked: false,
+                                                    mask_key: [0; 4],
+                                                    payload: std::mem::take(
+                                                        &mut fragmented_payload,
+                                                    ),
+                                                }));
+                                                fragmented_opcode = None;
+                                            }
+                                            // else: more continuation frames expected
+                                        } else {
+                                            // Continuation without a started message — protocol error
+                                            callback(Message::Error(FrameError::InsufficientData));
+                                            break;
+                                        }
+                                    }
+                                }
                             }
-                            _ => callback(Message::Frame(frame)),
-                        },
-                        Err(e) => {
-                            callback(Message::Error(e));
-                            break;
+                            Err(e) => {
+                                callback(Message::Error(e));
+                                break;
+                            }
                         }
                     }
                 }
@@ -389,4 +453,18 @@ impl Drop for AsyncWebSocket {
             let _ = handle.join();
         }
     }
+}
+
+/// Calculate the encoded byte size of a parsed frame for buffer advancement.
+fn frame_encoded_size(frame: &Frame) -> usize {
+    let mut size = 2; // first two bytes (FIN/opcode + payload len/masked)
+    let len = frame.payload.len();
+    if len >= 126 {
+        size += if len <= u16::MAX as usize { 2 } else { 8 };
+    }
+    if frame.masked {
+        size += 4; // masking key
+    }
+    size += len; // payload
+    size
 }
