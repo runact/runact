@@ -284,7 +284,7 @@ impl WebSocketServer {
     /// configuration.
     ///
     /// Like [`accept_with_callback`](Self::accept_with_callback) but accepts a
-    /// [`WebSocketConfig`] for options such as ping interval heartbeats.
+    /// [`super::async_ws::WebSocketConfig`] for options such as ping interval heartbeats.
     pub fn accept_with_callback_and_config<F>(
         mut self,
         callback: F,
