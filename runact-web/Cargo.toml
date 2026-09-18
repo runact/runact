@@ -1,0 +1,13 @@
+[package]
+name = "runact-web"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "HTTP layer for Runact actor runtime"
+repository = "https://github.com/runact/runact"
+
+[dependencies]
+runact = { path = ".." }
+
+[dev-dependencies]

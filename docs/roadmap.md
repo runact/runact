@@ -10,8 +10,10 @@ This document outlines the development phases for Runact. Runact is the runtime;
 
 | Component | Status | Tests |
 |-----------|--------|-------|
-| **Runact** (runtime) | v1.1.0 | 108+ tests across actor, async, cancellation, compute, observability, process, reactor, resource, scheduler, stress, tcp_api, timer |
+| **Runact** (runtime) | v1.2.1 | 108 tests across actor, async, cancellation, compute, observability, process, reactor, resource, scheduler, stress, tcp_api, timer |
+| **runact-web** (HTTP) | v0.1.0 | 34 tests for HTTP Request, Response, Headers |
 | **Phase 9** (Runtime + Networking) | ✅ Complete | cancellation, timers, actor-async integration, process runtime, TCP reactor, TCP API, stress tests |
+| **Phase 10** (HTTP) | ✅ Complete | HTTP/1.1 parsing, request/response types, headers |
 
 **Paper** (editor) — Separate project, tracked at `paper/docs/roadmap.md`
 
@@ -150,7 +152,7 @@ Future work:
 
 ---
 
-## Phase 10 — HTTP
+## Phase 10 — HTTP ✅
 
 Build:
 
@@ -158,16 +160,14 @@ Build:
 runact-web
 ```
 
-Start with:
+Implemented:
 
-```text
-HTTP/1.1
-Request
-Response
-Headers
-Parser
-Encoder
-```
+- ✅ HTTP/1.1 `Request` parsing and encoding
+- ✅ HTTP/1.1 `Response` parsing and encoding
+- ✅ Case-insensitive `Headers` type
+- ✅ `Method` enum (GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS)
+- ✅ `StatusCode` enum with known codes + `Custom(u16)`
+- ✅ 34 acceptance tests (headers, request, response)
 
 See [Development Plan](development-plan.md) §48 Phase 9.
 

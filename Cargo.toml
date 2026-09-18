@@ -1,3 +1,6 @@
+[workspace]
+members = ["runact-web"]
+
 [package]
 name = "runact"
 version = "1.2.1"
