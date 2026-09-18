@@ -34,6 +34,8 @@ use std::sync::mpsc;
 /// Events delivered to the server callback.
 #[derive(Debug)]
 pub enum ServerEvent {
+    /// The connection has been established and the writer is ready.
+    Connected,
     /// A parsed WebSocket frame.
     Frame(Frame),
     /// The peer closed the connection cleanly.
@@ -324,6 +326,9 @@ impl WebSocketServer {
             config,
         );
         let conn_writer = ConnectionWriter(ws.get_writer());
+
+        // Send Connected event first so the callback can register the writer
+        callback(&conn_writer, ServerEvent::Connected);
 
         for event in event_rx.iter() {
             callback(&conn_writer, event);

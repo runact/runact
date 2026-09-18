@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **runact-web: WebSocket heartbeats** — `WebSocketConfig` with `ping_interval` for periodic Ping frames to keep connections alive. `AsyncWebSocket::with_callback_and_config` and `WebSocketServer::accept_with_callback_and_config` accept the config. Includes `SendError` enum (Full/Closed) for proper error handling in non-blocking sends.
 - **runact-web: WebSocket binary + control frames** — Added `send_binary`, `send_ping`, `send_pong` to `ConnectionWriter` and `AsyncWriter` for full RFC 6455 control frame support. Ping/Pong/Shutdown variants in the outbound channel.
 - **runact-web: WebSocket echo example** — Runnable example binary `websocket_echo.rs` demonstrating a complete echo server with 30s ping heartbeats.
+- **runact-web: WebSocket chat example** — Runnable example binary `websocket_chat.rs` demonstrating a multi-client broadcast chat server with peer registry and 30s ping heartbeats.
+- **runact-web: WebSocket chat broadcast test** — Integration test `ws_chat.rs` verifying two-client broadcast: sender connects, sends text frame, receiver receives the broadcasted message.
 
 ## [1.2.1] - 2026-09-16
 

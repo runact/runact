@@ -52,6 +52,7 @@ fn main() {
 
             if let Err(e) = server.accept_with_callback_and_config(
                 |writer, event| match event {
+                    ServerEvent::Connected => {} // writer is ready, no action needed
                     ServerEvent::Frame(f) => match f.opcode {
                         OpCode::Text | OpCode::Binary => {
                             let _ = writer.send(&f); // echo back
