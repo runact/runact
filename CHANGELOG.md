@@ -7,23 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-18
+
 ### Added
 
 - **runact-web: WebSocket support** — RFC 6455 implementation in `runact-web::websocket`: frame parsing/encoding (per-frame masking, extended 16/64-bit lengths, all opcodes), handshake validation with `Sec-WebSocket-Accept` computation (SHA-1 + base64 using the standard RFC 6455 GUID), `WebSocketConnection<R, W>` over `Read`/`Write` with `send_pong`/`send_close` helpers, and `StatusCode::SwitchingProtocols` (101). Added `sha1` and `base64` dependencies.
-- **runact-web: Async WebSocket** — `AsyncWebSocket` provides non-blocking frame I/O over any `Read + Write` stream (e.g. `TcpStream`). Uses dedicated reader/writer threads with a bounded channel and cooperative shutdown, keeping I/O off scheduler workers. Includes `Message` enum (Frame/Closed/Error), `AsyncWriter` with non-blocking `send`/`send_close`, and auto-pong for incoming Ping frames.
-- **runact-web: WebSocket server** — `WebSocketServer` handles the full HTTP→WebSocket upgrade handshake (101 Switching Protocols with RFC 6455 `Sec-WebSocket-Accept`), then runs a callback-based message loop. Provides `bind` (path-matching + upgrade validation), `accept` (performs handshake + returns `AsyncWebSocket`), and `accept_with_callback` (handshake + message loop with `ConnectionWriter` for replies). Supports echo, ping/pong, and close-frame roundtrips over real TCP.
-- **runact-web: WebSocket heartbeats** — `WebSocketConfig` with `ping_interval` for periodic Ping frames to keep connections alive. `AsyncWebSocket::with_callback_and_config` and `WebSocketServer::accept_with_callback_and_config` accept the config. Includes `SendError` enum (Full/Closed) for proper error handling in non-blocking sends.
-- **runact-web: WebSocket binary + control frames** — Added `send_binary`, `send_ping`, `send_pong` to `ConnectionWriter` and `AsyncWriter` for full RFC 6455 control frame support. Ping/Pong/Shutdown variants in the outbound channel.
-- **runact-web: WebSocket echo example** — Runnable example binary `websocket_echo.rs` demonstrating a complete echo server with 30s ping heartbeats.
-- **runact-web: WebSocket chat example** — Runnable example binary `websocket_chat.rs` demonstrating a multi-client broadcast chat server with peer registry and 30s ping heartbeats.
-- **runact-web: WebSocket chat broadcast test** — Integration test `ws_chat.rs` verifying two-client broadcast: sender connects, sends text frame, receiver receives the broadcasted message.
-- **runact-web: Runact TCP bridge** — `RunactTcpStream` adapter implements `Read`/`Write`/`SetReadTimeout` for `runact::net::tcp_api::TcpStream`, enabling `WebSocketServer` to accept connections from the runact async TCP runtime. Integration test `ws_runact_bridge.rs` verifies full broadcast over runact-managed TCP connections. `WebSocketServer` is now generic over `S: Read + Write + SetReadTimeout + Send + 'static`.
-- **runact-web: WebSocketServer Connected event** — `ServerEvent::Connected` variant sent before the reader loop, allowing callbacks to register peer writers immediately upon handshake completion (fixes race condition in broadcast patterns).
-- **runact-web: read_handshake_request helper** — `WebSocketServer::bind` now uses a retry-based read with 5s timeout, handling non-blocking streams (like `RunactTcpStream`) that return `WouldBlock` during handshake.
-- **runact-web: agent_server example + test** — Phase 13 application: WebSocket server bridging runact's TCP listener to a supervised `AgentActor`. Demonstrates the full architecture from `docs/agents.md`: actor-managed LLM adapter with `MockAdapter`, `RuntimeSender` for cross-thread message delivery, and `ModelAdapter` trait for pluggable backends.
-- **runact-web: agent_api REST example + test** — Phase 13 REST API server using `Router` with runact's `TcpListener`. CRUD endpoints for agent sessions (`GET/POST /api/agents`, `GET/DELETE /api/agents/:id`), shared `SessionStore` behind `Arc<Mutex>` (would be an Actor in production), HTTP request reader with Content-Length support.
-- **runact-web: WebSocket message fragmentation** — Reader loop now reassembles fragmented messages per RFC 6455 §5.4: first frame (FIN=false, Text/Binary) starts message, continuation frames accumulate payload, final frame (FIN=true, Continuation) delivers reassembled message. Control frames (Ping/Pong/Close) interleave correctly without affecting reassembly state. Added `frame_encoded_size` helper for buffer advancement. Tests in `ws_fragmentation.rs`: basic reassembly + interleaved control frame handling.
-- **runact-web: reader loop multi-frame processing** — Reader now processes all frames from a single `read` call (not just the first), improving throughput when multiple frames arrive in the same TCP segment.
+- **runact-web: Async WebSocket** — `AsyncWebSocket` provides non-blocking frame I/O over any `Read + Write` stream. Uses dedicated reader/writer threads with a bounded channel and cooperative shutdown. Includes `Message` enum (Frame/Closed/Error), `AsyncWriter`, auto-pong for Ping.
+- **runact-web: WebSocket server** — `WebSocketServer` handles the HTTP→WebSocket upgrade handshake, then runs a callback-based message loop. Supports echo, ping/pong, close frames over TCP.
+- **runact-web: WebSocket heartbeats** — `WebSocketConfig` with `ping_interval`, `SendError` enum.
+- **runact-web: WebSocket binary + control frames** — `send_binary`, `send_ping`, `send_pong`.
+- **runact-web: WebSocket echo example** — `websocket_echo.rs` with 30s ping heartbeats.
+- **runact-web: WebSocket chat example** — `websocket_chat.rs` broadcast chat server.
+- **runact-web: WebSocket chat broadcast test** — `ws_chat.rs`.
+- **runact-web: Runact TCP bridge** — `RunactTcpStream` adapter, `WebSocketServer` generic over stream type, `ws_runact_bridge.rs` test.
+- **runact-web: WebSocketServer Connected event** — `ServerEvent::Connected` before reader loop.
+- **runact-web: read_handshake_request helper** — retry-based read with 5s timeout.
+- **runact-web: agent_server example + test** — `agent_server.rs`, `ws_agent_server.rs`.
+- **runact-web: agent_api REST example + test** — `agent_api.rs`, `ws_agent_api.rs`.
+- **runact-web: WebSocket message fragmentation** — RFC 6455 §5.4 reassembly, `ws_fragmentation.rs` tests.
+- **runact-web: reader loop multi-frame processing** — processes all frames from a single `read()`.
+- **Docs: reference manual** — "The Runact Runtime" book in `docs/book/` (20 chapters, PDF included).
 
 ## [1.2.1] - 2026-09-16
 

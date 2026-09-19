@@ -1,14 +1,17 @@
 [package]
 name = "runact-web"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 description = "HTTP layer for Runact actor runtime"
 repository = "https://github.com/runact/runact"
+readme = "README.md"
+keywords = ["websocket", "http", "router", "web", "runact"]
+categories = ["web-programming::http-server"]
 
 [dependencies]
-runact = { path = ".." }
+runact = { version = "1.2", path = ".." }
 sha1 = "0.10"
 base64 = "0.22"
 
