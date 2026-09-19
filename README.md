@@ -50,9 +50,11 @@ runtime.send(id, "world".to_string()).unwrap();
 
 ## Documentation
 
+- [The Runact Runtime — A Reference Manual](docs/book/SUMMARY.md) — Comprehensive reference covering core concepts, the actor system, async tasks, compute pool, TCP networking, HTTP/WebSocket, message fragmentation, agent servers, REST APIs, API reference, invariants, and architectural decisions. Available as [PDF](docs/book/runact-book.pdf).
 - [Development Plan](docs/development-plan.md) — Full 53-section architecture and platform vision
 - [Architecture](docs/architecture.md) — Full architectural document with runtime model, invariants, and development order
 - [Async Runtime](docs/async-runtime.md) — Architectural boundary: Runact schedules asynchronous work, I/O libraries define it (Future executor, task lifecycle, cancellation, timers, task groups)
+- [Runtime + Networking Plan](docs/runtime-networking-plan.md) — TCP, async runtime, and remote AI agent support plan
 - [Vision](docs/vision.md) — Design priorities and long-term evolution
 - [Roadmap](docs/roadmap.md) — Development phases and current status
 - [Getting Started](docs/guides/getting-started.md) — Walkthrough of core APIs
@@ -68,6 +70,20 @@ runtime.send(id, "world".to_string()).unwrap();
 - [Object Model](docs/object-model.md) — Core runtime types reference
 - [Protocol](docs/protocol.md) — Message envelope and request/reply protocol
 - [API Reference](https://docs.rs/runact)
+
+## runact-web
+
+A companion crate providing HTTP/1.1 and WebSocket support built on top of
+Runact's TCP layer:
+
+- **`Router`** — URL routing with path parameters (`:id`), middleware chain
+- **`Request`/`Response`** — HTTP/1.1 request parsing and response construction
+- **`WebSocketServer`** — RFC 6455 WebSocket server with ping/pong heartbeats,
+  message fragmentation/reassembly, and adapter for both `std::net::TcpStream`
+  and Runact's native TCP
+- **Examples**: `websocket_echo`, `websocket_chat`, `agent_server`, `agent_api`
+
+See [examples](runact-web/examples/) and [tests](runact-web/tests/).
 
 ## MSRV
 
