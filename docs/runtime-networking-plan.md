@@ -853,13 +853,22 @@ This phase extends Runact with TCP networking, process runtime, cancellation, ta
 - **9e** — TCP Reactor ✅
 - **9f** — Stress Testing ✅
 
-### Next: Phase 12 — WebSocket (roadmap.md)
+### Next: Phase 13 — REST API and AI Agent Server (roadmap.md)
 
 Phase 10 (HTTP) and Phase 11 (Web Framework) are complete in `runact-web`.
 Phase 12 (WebSocket) is complete: RFC 6455 frame parsing/encoding, handshake
 validation, `WebSocketServer` generic over stream type, `AsyncWebSocket` with
 non-blocking reader/writer/ping threads, `RunactTcpStream` adapter bridging
 runact's `TcpStream`, and example binaries.
+
+Phase 12.5 (Fragmentation) is complete: the reader loop reassemble messages
+per RFC 6455 §5.4 — first frame (FIN=false, Text/Binary) starts a message,
+continuation frames accumulate payload, final frame (FIN=true) delivers the
+reassembled message. Control frames (Ping/Pong/Close) interleave without
+disrupting reassembly. Tests in `ws_fragmentation.rs`.
+
+Phase 13 (Applications) is complete: `agent_server.rs` (WebSocket → Actor →
+MockAdapter), `agent_api.rs` (REST API via `Router` + `TcpListener`), `ws_agent_api.rs` test.
 
 ---
 

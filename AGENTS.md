@@ -72,9 +72,22 @@ runact-web/         # HTTP/WebSocket layer (separate crate, workspace member)
 - Benchmarks are criterion in `benches/runact_bench.rs`; run them when perf-affecting changes land. Async runtime perf targets are engineering goals, not guarantees (see `docs/async-runtime.md`).
 - MSRV 1.85 — do not use language features newer than 1.85 even if the toolchain is newer.
 
-## Definition of Done
+## Integration Tests (Acceptance Layer)
 
-- [ ] Failing tests written first (integration + unit as appropriate), red observed
+Integration tests live in `runact-web/tests/` for the web layer and `tests/` for core.
+Each file tests one feature area. Run all with `cargo test --all-targets`.
+
+### Test Counts
+
+| Crate | Tests | Suites |
+|-------|-------|--------|
+| runact | ~108 | actor, async_executor, basic, compute, observability, resource, scheduler, stress, tcp_api, timer |
+| runact-web | ~50 | WebSocket: ws_server, ws_chat, ws_runact_bridge, ws_fragmentation, ws_agent_server, ws_agent_api |
+|        |       | HTTP: request, response, headers, router |
+|        |       | Frame: websocket, async_websocket |
+| Total | ~160+ across 16 suites | 0 failures
+
+## Definition of Done
 - [ ] Minimal implementation, matching sibling-file patterns
 - [ ] `cargo fmt --check` clean
 - [ ] `cargo clippy --all-targets -- -D warnings` clean

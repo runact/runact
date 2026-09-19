@@ -233,7 +233,7 @@ AI agent server
 Remote PaperOS server
 ```
 
-### Status: In Progress
+### Status: ✅ Complete
 
 **AI agent server** — `examples/agent_server.rs` demonstrates the full agent lifecycle over WebSocket:
 - `AgentActor` (runact `Actor`) wraps a pluggable `ModelAdapter`
