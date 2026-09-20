@@ -69,8 +69,8 @@ fn worker_loop(local_queue: RunQueue, steal_targets: Vec<RunQueue>, stop: Arc<At
             break;
         }
 
-        // 1. Check own queue
-        if let Some(task) = local_queue.pop() {
+        // 1. Check own queue (block for up to 10ms)
+        if let Some(task) = local_queue.pop_timeout(Duration::from_millis(10)) {
             task();
             continue;
         }
@@ -88,9 +88,9 @@ fn worker_loop(local_queue: RunQueue, steal_targets: Vec<RunQueue>, stop: Arc<At
             }
         }
 
-        // 3. If nothing to do, yield CPU
+        // 3. If nothing to do, park briefly to avoid idle CPU spin
         if !stolen {
-            thread::yield_now();
+            std::thread::park_timeout(Duration::from_millis(10));
         }
     }
 }
@@ -102,12 +102,13 @@ Lock-based queue with work-stealing support.
 
 ```rust
 pub struct RunQueue {
-    queue: Arc<Mutex<VecDeque<Task>>>,
+    deque: Mutex<VecDeque<Task>>,
+    not_empty: Condvar,
 }
 ```
 
-- `push` — adds task to back
-- `pop` — removes task from front (local worker)
+- `push` — adds task to back, notifies waiting worker
+- `pop_timeout` — blocks for up to `timeout` waiting for a task, then drains
 - `steal_half` — drains first half of queue (victim)
 
 ### ReductionCounter
@@ -130,13 +131,13 @@ After each message is processed by an actor, the counter is incremented. When it
 
 ```text
 1. Actor spawns → task added to worker queue (round-robin)
-2. Worker picks task from own queue (pop_front)
+2. Worker blocks on own queue (pop_timeout, up to 10ms)
 3. Actor processes message
 4. Reduction counter increments
 5. If counter >= MAX_REDUCTIONS → yield (thread::yield_now)
 6. Otherwise → continue with next message from mailbox
 7. If no work → try to steal from other workers
-8. If nothing to steal → thread::yield_now
+8. If nothing to steal → park_timeout(10ms) → retry
 ```
 
 ### Work Stealing
@@ -145,14 +146,14 @@ After each message is processed by an actor, the counter is incremented. When it
 Worker 0 idle
     │
     ▼
-Check own queue → empty
+Check own queue (block 10ms) → empty
     │
     ▼
 Try to steal from other workers
     │
     ├── Found work → execute stolen tasks
     │
-    └── No work → yield → retry
+    └── No work → park_timeout(10ms) → retry
 ```
 
 The `steal_half()` method takes half of the victim's queue (rounded down), moving tasks to the stealing worker's local queue.

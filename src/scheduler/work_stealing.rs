@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use std::thread;
+use std::time::Duration;
 
 use super::run_queue::RunQueue;
 
@@ -53,7 +54,8 @@ impl Scheduler {
                 break;
             }
 
-            if let Some(task) = local_queue.pop() {
+            // Block-wait for local work (up to 10ms), then try stealing.
+            if let Some(task) = local_queue.pop_timeout(Duration::from_millis(10)) {
                 task();
                 continue;
             }
@@ -71,7 +73,10 @@ impl Scheduler {
             }
 
             if !stolen {
-                thread::yield_now();
+                // Both local queue and all steal targets are empty.
+                // Block for a short interval before re-checking, rather than
+                // spinning on `yield_now` (which burns CPU at idle).
+                std::thread::park_timeout(std::time::Duration::from_millis(10));
             }
         }
     }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Scheduler idle CPU burn** — the work-stealing scheduler's worker loop spun on `thread::yield_now()` when all queues were empty, burning ~3+ cores at 100% CPU on an idle runtime. Workers now block on a `Condvar` (via `RunQueue::pop_timeout`) with a short timeout before retrying, consuming negligible CPU when idle.
+
 ## [0.2.0] - 2026-09-18
 
 ### Added
