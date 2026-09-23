@@ -499,6 +499,9 @@ impl Runtime {
     pub fn sender(&self) -> RuntimeSender {
         RuntimeSender {
             senders: self.senders.clone(),
+            request_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+                self.request_counter.load(Ordering::Relaxed),
+            )),
         }
     }
 
@@ -601,6 +604,7 @@ pub struct RuntimeSender {
             >,
         >,
     >,
+    request_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl RuntimeSender {
@@ -620,6 +624,46 @@ impl RuntimeSender {
                 crossbeam_channel::TrySendError::Full(_) => RuntimeError::MailboxFull(target),
                 crossbeam_channel::TrySendError::Disconnected(_) => RuntimeError::RuntimeStopped,
             })
+    }
+
+    /// Send a request to an actor and get a handle to receive the reply.
+    ///
+    /// Mirrors [`Runtime::request`](Runtime::request) but works through the
+    /// clonable sender alone — for threads and extensions that do not hold a
+    /// `&Runtime`. The actor replies via [`ActorContext::reply`].
+    pub fn request<M: Send + 'static>(
+        &self,
+        target: ActorId,
+        message: M,
+    ) -> Result<RequestHandle, RuntimeError> {
+        let request_id = self
+            .request_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (reply_tx, reply_rx) = crossbeam_channel::bounded(1);
+
+        let senders = self
+            .senders
+            .read()
+            .map_err(|_| RuntimeError::RuntimeStopped)?;
+        let sender = senders
+            .get(&target)
+            .ok_or(RuntimeError::ActorNotFound(target))?;
+
+        sender
+            .try_send(MessageEnvelope::Request {
+                _request_id: request_id,
+                payload: Box::new(message),
+                reply_sender: reply_tx,
+            })
+            .map_err(|e| match e {
+                crossbeam_channel::TrySendError::Full(_) => RuntimeError::MailboxFull(target),
+                crossbeam_channel::TrySendError::Disconnected(_) => RuntimeError::RuntimeStopped,
+            })?;
+
+        Ok(RequestHandle {
+            id: request_id,
+            receiver: reply_rx,
+        })
     }
 }
 

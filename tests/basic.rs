@@ -381,3 +381,27 @@ fn test_multiple_requests_concurrent() {
         assert_eq!(*count, 10);
     }
 }
+
+#[test]
+fn test_sender_request_roundtrip() {
+    let mut runtime = Runtime::new().expect("Failed to create runtime");
+    let counter = runtime
+        .spawn(CounterActor { count: 0 })
+        .expect("Failed to spawn");
+
+    runtime
+        .send(counter, CounterMessage::Increment)
+        .expect("Failed to send");
+
+    // Clone the sender and drop the runtime borrow — request must work
+    // through the sender alone (for threads/extensions that outlive &Runtime).
+    let sender = runtime.sender();
+    let handle = sender
+        .request(counter, CounterMessage::GetValue)
+        .expect("Failed to request via sender");
+    let reply = handle
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Failed to receive reply");
+    let count = reply.downcast::<u64>().expect("Failed to downcast");
+    assert_eq!(*count, 1);
+}
