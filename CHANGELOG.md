@@ -5,7 +5,7 @@ All notable changes to Runact will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-09-27
 
 ### Added
 
@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Architecture
 
-- Hot code loading implements Pattern 2 (dynamic supervision): `DynamicSupervisor` receives work items and spawns a child actor per item. `ActorFactory::prepare_dynamic_spawn()` always retrieves the current version's vtable from `CodeManager`, so new child actors automatically run the latest code after an upgrade. Existing children keep their original vtable until they terminate.
+- Pattern 2 (dynamic supervision) with automatic spawning: `DynamicSupervisor` receives work items and spawns a child actor per item via `ctx.spawn_child()`. `ActorFactory::prepare_dynamic_spawn()` always retrieves the current version's vtable from `CodeManager`, so new child actors automatically run the latest code after an upgrade. Existing children keep their original vtable until they terminate.
 
 ## [1.2.2] - 2026-09-20
 
