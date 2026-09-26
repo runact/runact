@@ -1,8 +1,10 @@
+#[cfg(feature = "hot_code_loading")]
+use crate::actor::SpawnRequest;
 use crate::actor::{Actor, ActorContext, ActorId};
 use crate::compute::{ComputeConfig, ComputeScheduler};
 use crate::error::RuntimeError;
 #[cfg(feature = "hot_code_loading")]
-use crate::hotswap::{ActorFactory, CodeChangeResult, CodeManager};
+use crate::hotswap::{ActorFactory, CodeChangeResult, CodeManager, SpawnListener};
 use crate::scheduler::{MAX_REDUCTIONS, ReductionCounter, Scheduler};
 use crate::supervision::{ChildSpec, RestartStrategy, Supervisor};
 use crate::task::{Executor, TaskError, TaskHandle};
@@ -102,8 +104,7 @@ pub struct Runtime {
     stop: Arc<AtomicBool>,
     mailbox_capacity: usize,
     shutdown_timeout: Duration,
-    /// Number of actor loops still running; lets shutdown wait for a real
-    /// drain instead of sleeping a fixed window.
+    /// Number of actor loops still running.
     pending_actors: Arc<AtomicUsize>,
     /// Hot code loading: tracks versions and vtables for dynamic actors.
     #[cfg(feature = "hot_code_loading")]
@@ -111,6 +112,9 @@ pub struct Runtime {
     /// Factory for spawning versioned actors.
     #[cfg(feature = "hot_code_loading")]
     factory: Option<ActorFactory>,
+    /// Channel for actor-initiated child spawns (Pattern 2).
+    #[cfg(feature = "hot_code_loading")]
+    spawn_request_tx: Option<crossbeam_channel::Sender<SpawnRequest>>,
 }
 
 impl Runtime {
@@ -132,7 +136,23 @@ impl Runtime {
         #[cfg(feature = "hot_code_loading")]
         let code_manager = Arc::new(StdMutex::new(CodeManager::new()));
 
-        Ok(Self {
+        #[cfg(feature = "hot_code_loading")]
+        let (mut spawn_listener, spawn_request_tx) = SpawnListener::new(
+            code_manager.clone(),
+            senders.clone(),
+            config.mailbox_capacity,
+        );
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let pending_actors = Arc::new(AtomicUsize::new(0));
+
+        #[cfg(feature = "hot_code_loading")]
+        {
+            spawn_listener.set_stop(stop.clone());
+            spawn_listener.set_pending(pending_actors.clone());
+        }
+
+        let runtime = Self {
             scheduler,
             compute,
             timers,
@@ -140,10 +160,10 @@ impl Runtime {
             actors: Arc::new(RwLock::new(HashMap::new())),
             senders: senders.clone(),
             request_counter: AtomicU64::new(0),
-            stop: Arc::new(AtomicBool::new(false)),
+            stop: stop.clone(),
             mailbox_capacity: config.mailbox_capacity,
             shutdown_timeout: config.shutdown_timeout,
-            pending_actors: Arc::new(AtomicUsize::new(0)),
+            pending_actors: pending_actors.clone(),
             #[cfg(feature = "hot_code_loading")]
             code_manager: code_manager.clone(),
             #[cfg(feature = "hot_code_loading")]
@@ -154,7 +174,17 @@ impl Runtime {
                     request_counter: Arc::new(AtomicU64::new(0)),
                 },
             )),
-        })
+            #[cfg(feature = "hot_code_loading")]
+            spawn_request_tx: Some(spawn_request_tx),
+        };
+
+        #[cfg(feature = "hot_code_loading")]
+        {
+            spawn_listener.set_actors(runtime.actors.clone());
+            spawn_listener.spawn_listener_thread();
+        }
+
+        Ok(runtime)
     }
 
     /// Spawn an actor.
@@ -188,6 +218,12 @@ impl Runtime {
         let mut ctx = ActorContext::new(id, tx);
         ctx.set_senders(self.senders.clone());
         ctx.set_timer_handle(self.timers.handle());
+        #[cfg(feature = "hot_code_loading")]
+        {
+            if let Some(ref spawn_tx) = self.spawn_request_tx {
+                ctx.set_spawn_child_req_tx(spawn_tx.clone());
+            }
+        }
         if let Some(compute_tx) = self.compute.sender() {
             ctx.set_compute_sender(compute_tx);
         }
@@ -538,8 +574,9 @@ impl Runtime {
     #[cfg_attr(docsrs, doc(cfg(feature = "hot_code_loading")))]
     /// Load a new version of an actor module from a dynamic library.
     ///
-    /// After loading, NEW processes spawned for this module will use the new version.
-    /// Existing processes continue running the old code until restarted or upgraded.
+    /// After loading, **new processes spawned for this module will use the
+    /// new code version**. Existing processes continue running the old code
+    /// until restarted or upgraded.
     pub fn load_actor_module<P: AsRef<Path>>(
         &mut self,
         module_name: &str,

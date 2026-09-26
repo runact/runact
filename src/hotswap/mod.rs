@@ -1,95 +1,58 @@
-//! Hot code loading for Runact — Pattern 2 (Dynamic Supervision)
+//! Hot code loading module.
 //!
-//! This module provides Erlang/OTP-like hot code loading capabilities where a
-//! supervisor actor spawns child actors per work unit. New child processes
-//! automatically use the latest code version, while existing processes keep
-//! their original code until explicitly upgraded.
+//! Provides Erlang/OTP-style hot code loading for runact actors, enabling
+//! Pattern 2 (dynamic supervision): supervisors spawn child actors per work
+//! item, and new children automatically use the latest code version after a
+//! hot code upgrade.
 //!
-//! ## Architecture
-//!
-//! ```text
-//! Runtime
-//! ├── CodeManager (version registry)
-//! ├── ActorFactory (spawn_dynamic always uses current version)
-//! └── Supervisors → spawn children per work unit
-//!                    ├── Child v1.0 (old code)
-//!                    └── Child v1.1 (new code, auto-selected)
-//! ```
-//!
-//! When `prepare_dynamic_spawn()` is called, the factory always retrieves the current
-//! version's vtable, so new child actors automatically use the latest code.
-//!
-//! ## Pattern 2: Dynamic Supervision
-//!
-//! The [`DynamicSupervisor`] implements Pattern 2: it receives work items and
-//! each work item triggers a new child actor spawn. Because the supervisor uses
-//! `ActorFactory::prepare_dynamic_spawn()` — which always selects the current
-//! version — **new child actors spawned after a hot code upgrade automatically
-//! run the new code version**.
+//! Enable with the `hot_code_loading` cargo feature.
 
-pub mod codemgr;
+pub(crate) mod codemgr;
+pub(crate) mod dynamic_supervisor;
 pub mod factory;
 pub mod loader;
 pub mod migration;
-pub mod types;
-
-#[cfg(feature = "hot_code_loading")]
-pub mod dynamic_supervisor;
+pub(crate) mod spawn_listener;
+pub(crate) mod tests;
+pub(crate) mod types;
 
 pub use codemgr::{CodeManager, CodePath};
+pub use dynamic_supervisor::DynamicSupervisor;
 pub use factory::ActorFactory;
 pub use loader::{DynamicLibrary, LibraryLoader};
 pub use migration::{MigrationFn, MigrationRegistry, StateMigration};
-pub use types::{
-    ActorSpec, ActorVTable, DeserializeFn, DropFn, MessageHandler, MigrateFn, SerializeFn,
-    VersionedActorRef, WorkItem, WorkerError, WorkerMessage, WorkerResponder,
-};
+pub use spawn_listener::SpawnListener;
+pub use types::{ActorSpec, ActorVTable, WorkItem, WorkerMessage};
 
-#[cfg(feature = "hot_code_loading")]
-pub use dynamic_supervisor::DynamicSupervisor;
-
-use crate::error::RuntimeError;
-
-/// Hot-swappable actor trait.
-///
-/// Actors implementing this trait can be upgraded at runtime.
-/// The actor must be able to serialize/deserialize its state and migrate
-/// between versions.
-pub trait HotSwappable: crate::actor::Actor {
-    /// Semantic version of this actor implementation (e.g. "1.0.0")
-    const VERSION: &'static str;
-
-    /// Serialize internal state for migration/hotswap.
-    fn serialize(&self) -> Vec<u8>;
-
-    /// Deserialize internal state from a previous version.
-    fn deserialize(state: &[u8]) -> Result<Self, RuntimeError>
-    where
-        Self: Sized;
-
-    /// Check if two actors have equivalent state (for testing).
-    fn state_matches(&self, other: &Self) -> bool;
-}
-
-/// Result of a code change operation.
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Result of a hot code loading operation.
+#[derive(Debug, Clone)]
 pub enum CodeChangeResult {
-    /// New version loaded and made current for new processes.
-    Upgraded {
-        /// Module name that was upgraded.
+    /// Module was loaded for the first time.
+    Loaded {
+        /// Module name.
         module: String,
-        /// New version string.
+        /// Version that was loaded.
         new_version: String,
-        /// Old version that was replaced.
+    },
+    /// Module was upgraded to a new version.
+    Upgraded {
+        /// Module name.
+        module: String,
+        /// Version that was loaded (the new current version).
+        new_version: String,
+        /// Previous version that was current before this load.
         old_version: String,
     },
-    /// Code change failed - no processes affected.
-    Failed {
-        /// Reason for failure.
-        reason: RuntimeError,
-    },
 }
 
-#[cfg(test)]
-mod tests;
+/// Trait for actors that support hot code loading.
+pub trait HotSwappable {
+    /// Get the current version of this actor's module.
+    fn current_version(&self) -> String;
+    /// Serialize the actor's internal state to bytes.
+    fn serialize_state(&self) -> Vec<u8>;
+    /// Deserialize state and return a new actor instance.
+    fn deserialize_state(state: Vec<u8>) -> Result<Self, crate::error::RuntimeError>
+    where
+        Self: Sized;
+}

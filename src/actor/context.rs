@@ -1,4 +1,4 @@
-use crate::actor::id::ActorId;
+use crate::actor::ActorId;
 use crate::compute::{ComputeError, ComputeHandle, Task, TaskId};
 use crate::error::RuntimeError;
 use crate::runtime::MessageEnvelope;
@@ -10,6 +10,15 @@ type SenderMap = Arc<RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEn
 
 type ReplySender = crossbeam_channel::Sender<Box<dyn std::any::Any + Send>>;
 
+/// Request to spawn a new child actor (Pattern 2 dynamic supervision).
+#[cfg(feature = "hot_code_loading")]
+pub struct SpawnRequest {
+    /// Module name to look up in CodeManager for the current vtable
+    pub module_name: String,
+    /// Initial state bytes for the child actor
+    pub initial_state: Vec<u8>,
+}
+
 /// Context provided to actor handlers.
 pub struct ActorContext {
     actor_id: ActorId,
@@ -18,6 +27,8 @@ pub struct ActorContext {
     reply_sender: Option<ReplySender>,
     compute_sender: Option<crossbeam_channel::Sender<Task>>,
     timer_handle: Option<TimerHandle>,
+    #[cfg(feature = "hot_code_loading")]
+    spawn_tx: Option<crossbeam_channel::Sender<SpawnRequest>>,
 }
 
 impl ActorContext {
@@ -32,6 +43,8 @@ impl ActorContext {
             reply_sender: None,
             compute_sender: None,
             timer_handle: None,
+            #[cfg(feature = "hot_code_loading")]
+            spawn_tx: None,
         }
     }
 
@@ -45,6 +58,14 @@ impl ActorContext {
 
     pub(crate) fn set_compute_sender(&mut self, compute_sender: crossbeam_channel::Sender<Task>) {
         self.compute_sender = Some(compute_sender);
+    }
+
+    #[cfg(feature = "hot_code_loading")]
+    pub(crate) fn set_spawn_child_req_tx(
+        &mut self,
+        tx: crossbeam_channel::Sender<crate::actor::context::SpawnRequest>,
+    ) {
+        self.spawn_tx = Some(tx);
     }
 
     pub(crate) fn set_timer_handle(&mut self, timer_handle: TimerHandle) {
@@ -175,5 +196,39 @@ impl ActorContext {
         if let Some(ref handle) = self.timer_handle {
             handle.cancel_timer(timer_id);
         }
+    }
+
+    /// Spawn a child actor using the current hot code loading version.
+    ///
+    /// This is the Pattern 2 dynamic supervision primitive. The supervisor
+    /// sends a spawn request to the runtime via a channel. The runtime
+    /// processes this request using the `ActorFactory` (which always uses
+    /// the current version from `CodeManager`).
+    ///
+    /// The child actor will be spawned with the **current** version of the
+    /// module — so after a hot code upgrade, new children automatically use
+    /// the new code.
+    ///
+    /// This is non-blocking: the request is sent via the channel and the
+    /// runtime handles the actual spawn.
+    ///
+    /// # Errors
+    ///
+    /// - [`RuntimeError::RuntimeStopped`] if the spawn channel is not configured
+    ///   (i.e., the `hot_code_loading` feature is not enabled) or the runtime
+    ///   has shut down.
+    #[cfg(feature = "hot_code_loading")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hot_code_loading")))]
+    pub fn spawn_child(
+        &self,
+        module_name: &str,
+        initial_state: Vec<u8>,
+    ) -> Result<(), RuntimeError> {
+        let tx = self.spawn_tx.as_ref().ok_or(RuntimeError::RuntimeStopped)?;
+        tx.send(SpawnRequest {
+            module_name: module_name.to_string(),
+            initial_state,
+        })
+        .map_err(|_| RuntimeError::RuntimeStopped)
     }
 }

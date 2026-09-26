@@ -4,11 +4,18 @@
 //! unit. New children always use the current version from CodeManager, so
 //! after a hot code upgrade the next work item automatically gets the new code.
 
+use crate::actor::{Actor, ActorContext, ActorError};
 use crate::hotswap::ActorFactory;
-use crate::hotswap::types::{WorkerError, WorkerMessage, WorkerResponder};
+use crate::hotswap::types::{WorkerMessage, WorkerResponder};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Trait for payloads that can be serialized into child actor initial state.
+pub trait WorkPayload: Send + 'static {
+    /// Serialize the payload into initial state bytes for the child actor.
+    fn to_bytes(&self) -> Vec<u8>;
+}
 
 /// Pattern 2 dynamic supervisor actor.
 ///
@@ -19,9 +26,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// This implements Erlang's "dynamic supervisor" behavior: each work item
 /// gets its own freshly-spawned child process, and new children always run
 /// the latest code version after a hot code upgrade.
+///
+/// ## Automatic Spawning
+///
+/// When a `SubmitWork` message is received, the supervisor calls
+/// `ctx.spawn_child()` which sends a spawn request to the runtime via
+/// a channel. The runtime processes this request using the current version
+/// from `CodeManager`, ensuring new children automatically use the latest code.
 pub struct DynamicSupervisor<T, R>
 where
-    T: Send + 'static,
+    T: WorkPayload,
     R: Send + 'static,
 {
     /// Module name to spawn child actors for
@@ -30,16 +44,14 @@ where
     factory: std::sync::Arc<ActorFactory>,
     /// Child work item counter for IDs
     work_counter: AtomicU64,
-    /// Track pending work items (work_id -> responder) - reserved for future
-    #[allow(dead_code)]
+    /// Track pending work items (work_id -> responder)
     pending: HashMap<u64, WorkerResponder<R>>,
-    /// Phantom data for generic types
-    _phantom: PhantomData<(T, R)>,
+    _phantom: PhantomData<T>,
 }
 
 impl<T, R> DynamicSupervisor<T, R>
 where
-    T: Send + 'static,
+    T: WorkPayload,
     R: Send + 'static,
 {
     pub fn new(module_name: &str, factory: std::sync::Arc<ActorFactory>) -> Self {
@@ -52,42 +64,44 @@ where
         }
     }
 
-    /// Prepare to spawn a child for a work item using the CURRENT version.
-    ///
-    /// This is the key Pattern 2 method: it calls `factory.prepare_dynamic_spawn()`
-    /// which always uses the current version's vtable. After a hot code
-    /// upgrade, this method returns the new version's vtable automatically.
-    pub fn prepare_work_spawn(
-        &self,
-        initial_state: Vec<u8>,
-    ) -> Result<std::sync::Arc<crate::hotswap::types::ActorVTable>, crate::error::RuntimeError>
-    {
-        let work_id = self.work_counter.fetch_add(1, Ordering::Relaxed);
-        let _ = work_id; // Reserved for tracing/pending tracking
-
-        let spec = crate::hotswap::types::ActorSpec {
-            module_name: self.module_name.clone(),
-            initial_state,
-        };
-
-        self.factory.prepare_dynamic_spawn(&spec)
-    }
-
     /// Get the current code version for this module.
     pub fn current_version(&self) -> Option<String> {
         self.factory.current_version(&self.module_name)
     }
-
-    /// Get the runtime sender for spawning child actors.
-    pub fn runtime_sender(&self) -> &crate::runtime::RuntimeSender {
-        self.factory.runtime_sender()
-    }
 }
 
-// Silence unused: WorkerMessage is the message protocol for this pattern
-#[allow(dead_code)]
-type _Silence = WorkerMessage<(), ()>;
+impl<T, R> Actor for DynamicSupervisor<T, R>
+where
+    T: WorkPayload,
+    R: Send + 'static,
+{
+    type Message = WorkerMessage<T, R>;
 
-// Silence unused: WorkerError is part of the message protocol
-#[allow(dead_code)]
-type _Silence2 = WorkerError;
+    fn handle(&mut self, msg: Self::Message, ctx: &mut ActorContext) -> Result<(), ActorError> {
+        match msg {
+            WorkerMessage::SubmitWork { work, responder } => {
+                let work_id = self.work_counter.fetch_add(1, Ordering::Relaxed);
+                self.pending.insert(work_id, responder);
+
+                // PATTERN 2: Automatically spawn a child actor using the
+                // CURRENT version. The runtime will look up the current
+                // version's vtable in CodeManager and spawn the child with it.
+                // The payload is serialized into initial_state bytes so the
+                // child can reconstruct its state.
+                let initial_state = work.payload.to_bytes();
+                ctx.spawn_child(&self.module_name, initial_state)
+                    .map_err(|e| ActorError::Handler(e.to_string()))?;
+            }
+            WorkerMessage::ChildCompleted { work_id, result } => {
+                if let Some(responder) = self.pending.remove(&work_id) {
+                    responder.respond(result);
+                }
+            }
+            WorkerMessage::Shutdown => {
+                // Supervisor is shutting down; existing children will be
+                // terminated by the runtime's graceful shutdown.
+            }
+        }
+        Ok(())
+    }
+}

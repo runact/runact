@@ -1,12 +1,11 @@
-use crate::error::RuntimeError;
-use crate::hotswap::codemgr::CodeManager;
-use crate::hotswap::types::ActorVTable;
-
 /// Tests for the hot code loading module.
 #[cfg(test)]
 #[allow(clippy::module_inception)]
 mod hotswap_tests {
-    use super::*;
+    use crate::actor::{Actor, ActorContext, ActorError};
+    use crate::error::RuntimeError;
+    use crate::hotswap::CodeManager;
+    use crate::hotswap::types::ActorVTable as VTable;
 
     /// Test CodeManager version tracking
     #[test]
@@ -58,7 +57,7 @@ mod hotswap_tests {
 
         fn dummy_drop(_ptr: *mut ()) {}
 
-        let vtable = ActorVTable {
+        let vtable = VTable {
             version: "1.0.0".to_string(),
             type_name: "TestActor".to_string(),
             handle_message_fn: dummy_handle,
@@ -75,7 +74,6 @@ mod hotswap_tests {
     /// Test HotSwappable trait compiles and works
     #[test]
     fn test_hot_swappable_trait_compiles() {
-        use crate::actor::{Actor, ActorContext, ActorError};
         use crate::hotswap::HotSwappable;
 
         struct TestActor {
@@ -91,13 +89,15 @@ mod hotswap_tests {
         }
 
         impl HotSwappable for TestActor {
-            const VERSION: &'static str = "1.0.0";
+            fn current_version(&self) -> String {
+                "1.0.0".to_string()
+            }
 
-            fn serialize(&self) -> Vec<u8> {
+            fn serialize_state(&self) -> Vec<u8> {
                 self.count.to_le_bytes().to_vec()
             }
 
-            fn deserialize(state: &[u8]) -> Result<Self, RuntimeError>
+            fn deserialize_state(state: Vec<u8>) -> Result<Self, RuntimeError>
             where
                 Self: Sized,
             {
@@ -111,16 +111,12 @@ mod hotswap_tests {
                     Ok(TestActor { count: 0 })
                 }
             }
-
-            fn state_matches(&self, other: &Self) -> bool {
-                self.count == other.count
-            }
         }
 
         let actor = TestActor { count: 42 };
-        let serialized = actor.serialize();
-        let deserialized = TestActor::deserialize(&serialized).unwrap();
-        assert!(actor.state_matches(&deserialized));
+        let serialized = actor.serialize_state();
+        let deserialized = TestActor::deserialize_state(serialized).unwrap();
+        assert_eq!(actor.count, deserialized.count);
     }
 
     /// Test WorkItem type
@@ -163,6 +159,14 @@ mod hotswap_tests {
         use std::sync::atomic::AtomicU64;
         use std::sync::{Arc, Mutex, RwLock};
 
+        // Define a test payload type that implements WorkPayload
+        struct TestPayload(Vec<u8>);
+        impl crate::hotswap::dynamic_supervisor::WorkPayload for TestPayload {
+            fn to_bytes(&self) -> Vec<u8> {
+                self.0.clone()
+            }
+        }
+
         let cm = Arc::new(Mutex::new(CodeManager::new()));
         let factory = Arc::new(ActorFactory::new(
             cm,
@@ -172,14 +176,40 @@ mod hotswap_tests {
             },
         ));
 
-        let supervisor: DynamicSupervisor<String, String> =
+        let supervisor: DynamicSupervisor<TestPayload, String> =
             DynamicSupervisor::new("TestActor", factory);
 
         // No version loaded yet, should return None
         assert!(supervisor.current_version().is_none());
+    }
 
-        // prepare_work_spawn should fail since no module loaded
-        let result = supervisor.prepare_work_spawn(vec![]);
+    /// Test ActorFactory::prepare_dynamic_spawn returns current version
+    #[test]
+    fn test_factory_prepare_dynamic_spawn() {
+        use crate::hotswap::{ActorFactory, CodeManager};
+        use crate::runtime::RuntimeSender;
+        use std::collections::HashMap;
+        use std::sync::atomic::AtomicU64;
+        use std::sync::{Arc, Mutex, RwLock};
+
+        let cm = Arc::new(Mutex::new(CodeManager::new()));
+        let factory = ActorFactory::new(
+            cm.clone(),
+            RuntimeSender {
+                senders: Arc::new(RwLock::new(HashMap::new())),
+                request_counter: Arc::new(AtomicU64::new(0)),
+            },
+        );
+
+        // No module loaded → spawn should fail
+        let spec = crate::hotswap::types::ActorSpec {
+            module_name: "TestModule".to_string(),
+            initial_state: vec![],
+        };
+        let result = factory.prepare_dynamic_spawn(&spec);
         assert!(result.is_err());
+
+        // current_version should be None for unloaded module
+        assert!(factory.current_version("TestModule").is_none());
     }
 }
