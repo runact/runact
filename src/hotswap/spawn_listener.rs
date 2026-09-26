@@ -10,9 +10,35 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-/// Spawn listener that processes child actor spawn requests from actors
-/// (Pattern 2 dynamic supervision). Runs in its own OS thread, using
-/// `std::thread::spawn` for child actors.
+/// Wrapper for a raw pointer that is safe to send across threads.
+///
+/// The `ActorVTable` function pointers (`deserialize_fn`, `handle_message_fn`,
+/// `drop_fn`) are all `unsafe fn`, and the runtime is responsible for
+/// ensuring the pointed-to memory is valid for the lifetime of the child
+/// actor. Since each child actor runs on its own dedicated thread and the
+/// state pointer is created specifically for that child, it is safe to
+/// send the pointer to that child's thread.
+struct StatePtr(*mut ());
+
+// SAFETY: The child actor thread is the sole owner of the pointed-to state.
+// The pointer is created by `deserialize_fn` and dropped via `drop_fn` on
+// the same thread that uses `handle_message_fn`. No aliasing or concurrent
+// access occurs.
+unsafe impl Send for StatePtr {}
+unsafe impl Sync for StatePtr {}
+
+impl StatePtr {
+    fn is_null(&self) -> bool {
+        self.0.is_null()
+    }
+    fn ptr(&self) -> *mut () {
+        self.0
+    }
+}
+
+/// Spawn listener that processes child actor spawn requests from actors (Pattern 2
+/// dynamic supervision). Runs in its own OS thread, using `std::thread::spawn`
+/// for child actors.
 pub struct SpawnListener {
     rx: crossbeam_channel::Receiver<SpawnRequest>,
     code_manager: Arc<Mutex<CodeManager>>,
@@ -97,6 +123,11 @@ impl SpawnListener {
                                 "spawned child via Pattern 2"
                             );
 
+                            // Deserialize initial state into heap-allocated actor memory.
+                            let state = StatePtr(unsafe {
+                                (vtable.deserialize_fn)(req.initial_state)
+                                    .unwrap_or(std::ptr::null_mut())
+                            });
                             let vtable_clone = vtable.clone();
                             let actors_clone = self.actors.clone();
                             let senders_clone = self.senders.clone();
@@ -112,26 +143,72 @@ impl SpawnListener {
                                     module = %module_name_clone
                                 )
                                 .entered();
+                                // Create a child ActorContext with access to the shared
+                                // senders map, so the child can send messages to other actors.
+                                let child_sender = senders_clone
+                                    .read()
+                                    .ok()
+                                    .and_then(|s| s.get(&child_id_clone).cloned())
+                                    .unwrap_or_else(|| crossbeam_channel::bounded(1).0);
+                                let child_ctx =
+                                    crate::actor::ActorContext::new(child_id_clone, child_sender);
+                                let mut ctx = child_ctx;
+                                ctx.set_senders(senders_clone.clone());
                                 loop {
                                     if stop_clone.load(Ordering::Relaxed) {
                                         match child_rx.try_recv() {
                                             Ok(_) => continue,
                                             Err(_) => {
+                                                if !state.is_null() {
+                                                    unsafe {
+                                                        (vtable_clone.drop_fn)(state.ptr());
+                                                    }
+                                                }
                                                 pending_clone.fetch_sub(1, Ordering::SeqCst);
                                                 break;
                                             }
                                         }
                                     }
                                     match child_rx.recv_timeout(Duration::from_millis(10)) {
-                                        Ok(_envelope) => {
-                                            // In a full implementation, the vtable's
-                                            // handle_message_fn would be called here.
-                                            let _ = &vtable_clone;
-                                        }
+                                        Ok(envelope) => match envelope {
+                                            MessageEnvelope::Message(msg) => {
+                                                if !state.is_null() {
+                                                    unsafe {
+                                                        let _ = (vtable_clone.handle_message_fn)(
+                                                            state.ptr(),
+                                                            msg,
+                                                            &mut ctx,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            MessageEnvelope::Request {
+                                                payload,
+                                                reply_sender,
+                                                ..
+                                            } => {
+                                                if !state.is_null() {
+                                                    ctx.set_reply_sender(Some(reply_sender));
+                                                    unsafe {
+                                                        let _ = (vtable_clone.handle_message_fn)(
+                                                            state.ptr(),
+                                                            payload,
+                                                            &mut ctx,
+                                                        );
+                                                    }
+                                                    ctx.set_reply_sender(None);
+                                                }
+                                            }
+                                        },
                                         Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
                                             continue;
                                         }
                                         Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                                            if !state.is_null() {
+                                                unsafe {
+                                                    (vtable_clone.drop_fn)(state.ptr());
+                                                }
+                                            }
                                             pending_clone.fetch_sub(1, Ordering::SeqCst);
                                             actors_clone
                                                 .write()
