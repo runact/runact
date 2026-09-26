@@ -13,12 +13,17 @@ keywords = ["actor", "runtime", "concurrency", "supervision", "beam"]
 categories = ["asynchronous", "concurrency"]
 readme = "README.md"
 
+[features]
+default = []
+hot_code_loading = ["dep:libloading"]
+
 [dependencies]
 crossbeam-channel = "0.5"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 thiserror = "1"
+libloading = { version = "0.8", optional = true }
 
 [dev-dependencies]
 tracing-subscriber = "0.3"

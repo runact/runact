@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Hot code loading (Pattern 2)** — feature-gated module (`hot_code_loading` feature) providing Erlang/OTP-like hot code loading for `DynamicSupervisor`. `Runtime::load_actor_module()` loads a new version of an actor module from a dynamic library; after loading, **new child actors spawned by the supervisor automatically use the new code version** without affecting existing children. Existing children from before the upgrade continue with their original code until they complete. Includes `CodeManager` (version registry), `ActorFactory` (dynamic spawn with current-version vtables), `DynamicLibrary` (libloading wrapper), `HotSwappable` trait (serialize/deserialize state, version-aware), `DynamicSupervisor` (Pattern 2 — spawns a child actor per work item, always using the current version), `WorkerMessage`/`WorkItem`/`WorkerResponder` (supervisor message protocol), and `MigrationRegistry` (`register` + `migrate` for chaining state migrations between versions).
+
+### Architecture
+
+- Hot code loading implements Pattern 2 (dynamic supervision): `DynamicSupervisor` receives work items and spawns a child actor per item. `ActorFactory::prepare_dynamic_spawn()` always retrieves the current version's vtable from `CodeManager`, so new child actors automatically run the latest code after an upgrade. Existing children keep their original vtable until they terminate.
+
 ## [1.2.2] - 2026-09-20
 
 ### Fixed

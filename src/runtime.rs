@@ -1,12 +1,19 @@
 use crate::actor::{Actor, ActorContext, ActorId};
 use crate::compute::{ComputeConfig, ComputeScheduler};
 use crate::error::RuntimeError;
+#[cfg(feature = "hot_code_loading")]
+use crate::hotswap::{ActorFactory, CodeChangeResult, CodeManager};
 use crate::scheduler::{MAX_REDUCTIONS, ReductionCounter, Scheduler};
 use crate::supervision::{ChildSpec, RestartStrategy, Supervisor};
 use crate::task::{Executor, TaskError, TaskHandle};
+use std::any::Any;
 use std::collections::HashMap;
 use std::future::Future;
+#[cfg(feature = "hot_code_loading")]
+use std::path::Path;
 use std::pin::Pin;
+#[cfg(feature = "hot_code_loading")]
+use std::sync::Mutex as StdMutex;
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -16,21 +23,26 @@ use std::time::{Duration, Instant};
 
 use crate::timer::{TimerId, TimerService};
 
+// ============================================================================
+// Message envelope and request handling
+// ============================================================================
+
 /// Envelope wrapping messages sent to actors.
 pub(crate) enum MessageEnvelope {
-    Message(Box<dyn std::any::Any + Send>),
+    Message(Box<dyn Any + Send>),
     Request {
         _request_id: u64,
-        payload: Box<dyn std::any::Any + Send>,
-        reply_sender: crossbeam_channel::Sender<Box<dyn std::any::Any + Send>>,
+        payload: Box<dyn Any + Send>,
+        reply_sender: crossbeam_channel::Sender<Box<dyn Any + Send>>,
     },
 }
 
 /// Handle to a pending request. Receives the reply asynchronously.
 #[must_use]
+#[derive(Debug)]
 pub struct RequestHandle {
     id: u64,
-    receiver: crossbeam_channel::Receiver<Box<dyn std::any::Any + Send>>,
+    receiver: crossbeam_channel::Receiver<Box<dyn Any + Send>>,
 }
 
 impl RequestHandle {
@@ -40,24 +52,21 @@ impl RequestHandle {
     }
 
     /// Block until a reply is received.
-    pub fn recv(self) -> Result<Box<dyn std::any::Any + Send>, RuntimeError> {
+    pub fn recv(self) -> Result<Box<dyn Any + Send>, RuntimeError> {
         self.receiver
             .recv()
             .map_err(|_| RuntimeError::RuntimeStopped)
     }
 
     /// Try to receive a reply without blocking.
-    pub fn try_recv(&self) -> Result<Box<dyn std::any::Any + Send>, RuntimeError> {
+    pub fn try_recv(&self) -> Result<Box<dyn Any + Send>, RuntimeError> {
         self.receiver
             .try_recv()
             .map_err(|_| RuntimeError::RuntimeStopped)
     }
 
     /// Receive a reply with a timeout.
-    pub fn recv_timeout(
-        &self,
-        timeout: Duration,
-    ) -> Result<Box<dyn std::any::Any + Send>, RuntimeError> {
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<Box<dyn Any + Send>, RuntimeError> {
         self.receiver
             .recv_timeout(timeout)
             .map_err(|_| RuntimeError::RuntimeStopped)
@@ -70,11 +79,15 @@ impl RequestHandle {
 pub struct ActorInfo {
     /// Unique actor identifier.
     pub id: ActorId,
-    /// Optional human-readable name (e.g., `"supervisor"`).
+    /// Optional human-readable name (e.g., "supervisor").
     pub name: Option<String>,
     /// Current number of messages queued in the actor's mailbox.
     pub mailbox_depth: usize,
 }
+
+// ============================================================================
+// Runtime
+// ============================================================================
 
 /// Top-level runtime coordinator.
 #[must_use]
@@ -92,6 +105,12 @@ pub struct Runtime {
     /// Number of actor loops still running; lets shutdown wait for a real
     /// drain instead of sleeping a fixed window.
     pending_actors: Arc<AtomicUsize>,
+    /// Hot code loading: tracks versions and vtables for dynamic actors.
+    #[cfg(feature = "hot_code_loading")]
+    code_manager: Arc<StdMutex<CodeManager>>,
+    /// Factory for spawning versioned actors.
+    #[cfg(feature = "hot_code_loading")]
+    factory: Option<ActorFactory>,
 }
 
 impl Runtime {
@@ -110,18 +129,31 @@ impl Runtime {
         let timers = TimerService::new(senders.clone());
         let tasks = Executor::new();
 
+        #[cfg(feature = "hot_code_loading")]
+        let code_manager = Arc::new(StdMutex::new(CodeManager::new()));
+
         Ok(Self {
             scheduler,
             compute,
             timers,
             tasks,
             actors: Arc::new(RwLock::new(HashMap::new())),
-            senders,
+            senders: senders.clone(),
             request_counter: AtomicU64::new(0),
             stop: Arc::new(AtomicBool::new(false)),
             mailbox_capacity: config.mailbox_capacity,
             shutdown_timeout: config.shutdown_timeout,
             pending_actors: Arc::new(AtomicUsize::new(0)),
+            #[cfg(feature = "hot_code_loading")]
+            code_manager: code_manager.clone(),
+            #[cfg(feature = "hot_code_loading")]
+            factory: Some(ActorFactory::new(
+                code_manager,
+                RuntimeSender {
+                    senders: senders.clone(),
+                    request_counter: Arc::new(AtomicU64::new(0)),
+                },
+            )),
         })
     }
 
@@ -148,7 +180,6 @@ impl Runtime {
 
         let (tx, rx) = crossbeam_channel::bounded::<MessageEnvelope>(self.mailbox_capacity);
 
-        // Store the sender so we can route messages to this actor
         self.senders
             .write()
             .map_err(|_| RuntimeError::RuntimeStopped)?
@@ -243,10 +274,6 @@ impl Runtime {
     }
 
     /// Send a fire-and-forget message to an actor (non-blocking).
-    ///
-    /// Uses `try_send` internally — returns [`RuntimeError::MailboxFull`] if the
-    /// actor's mailbox is at capacity. For external threads that can afford to
-    /// block, use [`Runtime::send_blocking`] instead.
     pub fn send<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError> {
         tracing::debug!(target_id = %target, "send");
         let senders = self
@@ -265,9 +292,6 @@ impl Runtime {
     }
 
     /// Send a fire-and-forget message to an actor, blocking until the mailbox accepts it.
-    ///
-    /// **For use by external threads only.** Actors must never call this — it would
-    /// block the scheduler worker thread. Inside actors, use [`ActorContext::send_to`].
     pub fn send_blocking<M: Send + 'static>(
         &self,
         target: ActorId,
@@ -287,10 +311,6 @@ impl Runtime {
     }
 
     /// Send a request to an actor and get a handle to receive the reply.
-    ///
-    /// The message is enqueued with a one-shot reply channel. The actor can
-    /// reply using [`ActorContext::reply`]. The returned [`RequestHandle`]
-    /// provides `recv()`, `try_recv()`, and `recv_timeout()` to receive the reply.
     pub fn request<M: Send + 'static>(
         &self,
         target: ActorId,
@@ -326,9 +346,6 @@ impl Runtime {
     }
 
     /// Send a request and block until the reply is received.
-    ///
-    /// This is meant for external threads, NOT for use inside actors
-    /// (which would block the scheduler worker).
     pub fn request_blocking<M: Send + 'static, R: Send + 'static>(
         &self,
         target: ActorId,
@@ -355,9 +372,6 @@ impl Runtime {
     }
 
     /// Spawn a supervisor that manages child actor lifecycles.
-    ///
-    /// The supervisor tracks children defined by `children` and restarts them
-    /// according to `strategy` when they crash.
     pub fn spawn_supervisor(
         &self,
         strategy: RestartStrategy,
@@ -392,11 +406,6 @@ impl Runtime {
 
     /// Spawn an asynchronous task on the native async executor.
     ///
-    /// The returned [`TaskHandle`] yields the future's output. Pending futures
-    /// consume no worker time; a Runact-specific waker re-queues them when they
-    /// become runnable again. Panics inside the future are caught and surfaced
-    /// to the handle as [`TaskError::Panic`] instead of killing a worker.
-    ///
     /// Dropping the handle detaches the task: it still runs to completion.
     pub fn spawn_task<F, T>(&self, future: F) -> Result<TaskHandle<T>, TaskError>
     where
@@ -407,18 +416,11 @@ impl Runtime {
     }
 
     /// Sleep for the specified duration within an async task.
-    ///
-    /// This is an async method that yields control back to the executor
-    /// for the specified duration. The task will be re-polling after the
-    /// duration elapses.
-    pub fn sleep(_duration: Duration) -> SleepFuture {
-        SleepFuture::new(_duration)
+    pub fn sleep(duration: Duration) -> SleepFuture {
+        SleepFuture::new(duration)
     }
 
     /// Execute a future with a timeout.
-    ///
-    /// If the future completes before the timeout, returns `Ok(output)`.
-    /// If the timeout elapses first, returns `Err(TaskError::Timeout)`.
     pub fn timeout<F, T>(duration: Duration, future: F) -> TimeoutFuture<F>
     where
         F: Future<Output = T>,
@@ -449,9 +451,7 @@ impl Runtime {
         &self.compute
     }
 
-    /// Schedule a one-shot timer that sends a message to an actor after a delay.
-    ///
-    /// Returns a [`TimerId`] that can be passed to [`Runtime::cancel_timer`].
+    /// Schedule a one-shot timer.
     pub fn schedule_timer<M: Send + 'static>(
         &self,
         duration: Duration,
@@ -461,10 +461,7 @@ impl Runtime {
         self.timers.schedule(duration, target, Box::new(message))
     }
 
-    /// Schedule a periodic timer that sends a message to an actor at intervals.
-    ///
-    /// The message must be `Clone + Send + Sync` because it is cloned for
-    /// each tick. Returns a [`TimerId`] for cancellation.
+    /// Schedule a periodic timer.
     pub fn schedule_interval<M: Clone + Send + Sync + 'static>(
         &self,
         interval: Duration,
@@ -475,7 +472,7 @@ impl Runtime {
         self.timers.schedule_interval(
             interval,
             target,
-            Box::new(move || Box::new((*message).clone()) as Box<dyn std::any::Any + Send>),
+            Box::new(move || Box::new((*message).clone()) as Box<dyn Any + Send>),
         )
     }
 
@@ -488,20 +485,11 @@ impl Runtime {
         }
     }
 
-    /// Get a clonable handle for sending messages to actors from external
-    /// threads (e.g. I/O reader/writer threads in the `net` module).
-    ///
-    /// This is a lightweight handle containing only the shared senders map
-    /// (an `Arc<RwLock<...>>`), so it can be cheaply cloned into any thread.
-    /// It mirrors [`Runtime::send`](Self::send) but does not require a
-    /// borrowed `&Runtime`, making it safe to capture in blocking I/O threads
-    /// that outlive a borrowed reference.
+    /// Get a clonable handle for sending messages to actors from external threads.
     pub fn sender(&self) -> RuntimeSender {
         RuntimeSender {
             senders: self.senders.clone(),
-            request_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
-                self.request_counter.load(Ordering::Relaxed),
-            )),
+            request_counter: Arc::new(AtomicU64::new(self.request_counter.load(Ordering::Relaxed))),
         }
     }
 
@@ -511,10 +499,6 @@ impl Runtime {
     }
 
     /// Gracefully shut down the runtime.
-    ///
-    /// Stops accepting async tasks, sweeps pending tasks so their handles
-    /// resolve deterministically, waits up to `shutdown_timeout` for actors to
-    /// drain their remaining messages, then stops all internal services.
     pub fn shutdown(&mut self) -> Result<(), RuntimeError> {
         self.stop.store(true, Ordering::SeqCst);
 
@@ -545,6 +529,62 @@ impl Runtime {
         self.compute.shutdown();
         Ok(())
     }
+
+    // ========================================================================
+    // Hot Code Loading (feature-gated)
+    // ========================================================================
+
+    #[cfg(feature = "hot_code_loading")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hot_code_loading")))]
+    /// Load a new version of an actor module from a dynamic library.
+    ///
+    /// After loading, NEW processes spawned for this module will use the new version.
+    /// Existing processes continue running the old code until restarted or upgraded.
+    pub fn load_actor_module<P: AsRef<Path>>(
+        &mut self,
+        module_name: &str,
+        library_path: P,
+    ) -> Result<CodeChangeResult, RuntimeError> {
+        let result = {
+            let mut cm = self.code_manager.lock().unwrap();
+            let old_version = cm.load_new_version(module_name, library_path)?;
+            let new_version = cm
+                .current_version(module_name)
+                .unwrap_or_else(|| "unknown".to_string());
+
+            CodeChangeResult::Upgraded {
+                module: module_name.to_string(),
+                new_version,
+                old_version,
+            }
+        };
+
+        tracing::info!(?result, "hot code load complete");
+        Ok(result)
+    }
+
+    #[cfg(feature = "hot_code_loading")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hot_code_loading")))]
+    /// Get the current version of a module.
+    pub fn module_version(&self, module_name: &str) -> Option<String> {
+        let cm = self.code_manager.lock().unwrap();
+        cm.current_version(module_name)
+    }
+
+    #[cfg(feature = "hot_code_loading")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hot_code_loading")))]
+    /// List all loaded versions for a module.
+    pub fn module_versions(&self, module_name: &str) -> Vec<String> {
+        let cm = self.code_manager.lock().unwrap();
+        cm.list_versions(module_name)
+    }
+
+    #[cfg(feature = "hot_code_loading")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "hot_code_loading")))]
+    /// Get a reference to the actor factory for this runtime.
+    pub fn actor_factory(&self) -> &ActorFactory {
+        self.factory.as_ref().expect("factory not initialized")
+    }
 }
 
 impl Drop for Runtime {
@@ -552,6 +592,10 @@ impl Drop for Runtime {
         let _ = self.shutdown();
     }
 }
+
+// ============================================================================
+// Configuration and statistics
+// ============================================================================
 
 /// Runtime configuration.
 #[must_use]
@@ -587,29 +631,20 @@ pub struct RuntimeStats {
     pub request_count: u64,
 }
 
+// ============================================================================
+// RuntimeSender — clonable handle for external threads
+// ============================================================================
+
 /// Clonable handle for sending messages to actors from external threads.
-///
-/// Created via [`Runtime::sender`](Runtime::sender). Contains only the shared
-/// senders map (`Arc<RwLock<...>>`), so it can be cheaply cloned into I/O
-/// threads (e.g. the reader/writer threads in the `net` module) that need to
-/// deliver messages to actor mailboxes without borrowing a `&Runtime`.
 #[must_use]
 #[derive(Clone)]
 pub struct RuntimeSender {
-    senders: std::sync::Arc<
-        std::sync::RwLock<
-            std::collections::HashMap<
-                ActorId,
-                crossbeam_channel::Sender<crate::runtime::MessageEnvelope>,
-            >,
-        >,
-    >,
-    request_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    pub(crate) senders: Arc<RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>>,
+    pub(crate) request_counter: Arc<AtomicU64>,
 }
 
 impl RuntimeSender {
-    /// Send a fire-and-forget message to an actor. Non-blocking; returns
-    /// `RuntimeError::MailboxFull` if the actor's mailbox is at capacity.
+    /// Send a fire-and-forget message to an actor. Non-blocking.
     pub fn send<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError> {
         let senders = self
             .senders
@@ -619,7 +654,7 @@ impl RuntimeSender {
             .get(&target)
             .ok_or(RuntimeError::ActorNotFound(target))?;
         sender
-            .try_send(crate::runtime::MessageEnvelope::Message(Box::new(message)))
+            .try_send(MessageEnvelope::Message(Box::new(message)))
             .map_err(|e| match e {
                 crossbeam_channel::TrySendError::Full(_) => RuntimeError::MailboxFull(target),
                 crossbeam_channel::TrySendError::Disconnected(_) => RuntimeError::RuntimeStopped,
@@ -627,10 +662,6 @@ impl RuntimeSender {
     }
 
     /// Send a request to an actor and get a handle to receive the reply.
-    ///
-    /// Mirrors [`Runtime::request`](Runtime::request) but works through the
-    /// clonable sender alone — for threads and extensions that do not hold a
-    /// `&Runtime`. The actor replies via [`ActorContext::reply`].
     pub fn request<M: Send + 'static>(
         &self,
         target: ActorId,
@@ -666,6 +697,10 @@ impl RuntimeSender {
         })
     }
 }
+
+// ============================================================================
+// Futures
+// ============================================================================
 
 /// Future that completes after a specified duration.
 #[derive(Debug)]

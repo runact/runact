@@ -1,7 +1,7 @@
 use thiserror::Error;
 
 /// Runtime errors.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RuntimeError {
     #[error("actor not found: {0}")]
     ActorNotFound(crate::actor::ActorId),

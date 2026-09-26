@@ -33,9 +33,12 @@
 //! - **Async tasks** — a native executor for standard Rust `Futures` with task handles.
 //! - **Timers** — scheduled one-shot and periodic message delivery.
 //! - **Resources** — type-safe capability-based resource management.
-
+//! - **Hot code loading** — upgrade running actors without stopping the runtime.
+//!
 pub mod actor;
 pub mod error;
+#[cfg(feature = "hot_code_loading")]
+pub mod hotswap;
 pub mod net;
 pub mod process;
 pub mod resource;
@@ -50,6 +53,22 @@ mod task;
 pub use actor::{Actor, ActorContext, ActorError, ActorId};
 pub use compute::{ComputeConfig, ComputeError, ComputeHandle, ComputeScheduler};
 pub use error::RuntimeError;
+
+#[cfg(feature = "hot_code_loading")]
+pub use hotswap::types::{
+    ActorSpec, ActorVTable, DeserializeFn, DropFn, MessageHandler, MigrateFn, SerializeFn,
+    VersionedActorRef, WorkItem, WorkerError, WorkerMessage, WorkerResponder,
+};
+
+#[cfg(feature = "hot_code_loading")]
+pub use hotswap::dynamic_supervisor::DynamicSupervisor;
+
+#[cfg(feature = "hot_code_loading")]
+pub use hotswap::{
+    ActorFactory, CodeChangeResult, CodeManager, CodePath, DynamicLibrary, HotSwappable,
+    LibraryLoader, MigrationFn, MigrationRegistry, StateMigration,
+};
+
 pub use resource::{Capability, ResourceHandle, ResourceRegistry};
 pub use runtime::{
     ActorInfo, RequestHandle, Runtime, RuntimeConfig, RuntimeSender, RuntimeStats, SleepFuture,

@@ -24,6 +24,7 @@ Runact is a lightweight actor runtime for Rust that provides a programming model
 * resource/capability management
 * dedicated CPU-compute execution
 * async task execution (standard Rust `Future`s)
+* hot code loading (feature-gated)
 * observability
 
 Async tasks are a planned execution model described in the [Async Runtime](async-runtime.md) plan. Runact will execute standard Rust `Future`s on its own executor while keeping the actor model synchronous and cooperative.
