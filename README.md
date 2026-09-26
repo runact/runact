@@ -25,6 +25,7 @@ See [Development Plan](docs/development-plan.md) for the full architecture.
 - **TCP networking** — reactor, `TcpListener`, `TcpStream` with OS readiness integration (Linux epoll)
 - **Resources** — type-safe capability-based resource management
 - **Backpressure** — bounded mailbox with `MailboxFull` error on overflow
+- **Hot code loading** (feature-gated `hot_code_loading`) — Pattern 2 dynamic supervision: load new actor module versions at runtime; new child actors automatically use the latest code without restarting
 - **Observability** — structured logging via `tracing`
 
 ## Quick Start
@@ -62,6 +63,7 @@ runtime.send(id, "world".to_string()).unwrap();
 - [Compute](docs/guides/compute.md) — CPU-intensive work offloading
 - [Timers](docs/guides/timers.md) — One-shot and periodic timers
 - [Resources](docs/guides/resources.md) — Capability-based resource management
+- [Hot Code Loading](docs/hot-code-loading.md) — Pattern 2 dynamic supervision with version-aware actor spawning
 - [Actor Communication Principles](docs/actor-communication.md) — 24 principles for message flow and invariants
 - [Scheduler](docs/scheduler.md) — BEAM-style scheduler with work stealing
 - [Runtime API](docs/runtime.md) — Top-level Runtime API reference
