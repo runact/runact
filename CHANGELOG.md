@@ -5,6 +5,12 @@ All notable changes to Runact will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
++## [1.3.1] - 2026-09-27
+
+### Added
+
+- **Pattern 2 automatic spawning** — `DynamicSupervisor` now automatically spawns child actors per work item via `ctx.spawn_child()`. Added `SpawnListener` background thread that processes spawn requests using `CodeManager::get_current_vtable()`, ensuring new children always use the latest code version. Added `WorkPayload` trait for serializing work into child actor initial state.
+
 ## [1.3.0] - 2026-09-27
 
 ### Added
