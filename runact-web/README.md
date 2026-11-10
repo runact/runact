@@ -14,8 +14,8 @@ HTTP/WebSocket layer for the [Runact](https://crates.io/crates/runact) actor run
 
 ```toml
 [dependencies]
-runact = "1.2"
-runact-web = "0.2"
+runact = "1.3"
+runact-web = "0.3"
 sha1 = "0.10"
 base64 = "0.22"
 ```

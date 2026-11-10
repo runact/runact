@@ -5,13 +5,19 @@ All notable changes to Runact will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-++## [1.3.2] - 2026-09-27
-+
-+### Fixed
-+
-+- **SpawnListener vtable dispatch** — child actors spawned via `DynamicSupervisor`/`spawn_child` now properly invoke the vtable's `deserialize_fn`, `handle_message_fn`, and `drop_fn` via `unsafe` blocks. Previously the child loop polled the mailbox but did not actually dispatch to the actor handler. Added `StatePtr` wrapper (`unsafe impl Send + Sync`) to safely transport the raw state pointer across threads.
-+
-+## [1.3.1] - 2026-09-27
+## [Unreleased]
+
+### Changed
+
+- **Documentation** — synced `AGENTS.md`, `docs/roadmap.md`, `docs/development-plan.md`, and `docs/architecture.md` with the v1.3.x codebase: corrected the version (v1.3.2), added `hotswap`, `net`, and `process` to the module layout, documented the `libc` and optional `libloading` dependencies, refreshed test counts (199 tests across 27 suites; 208 with `hot_code_loading`), marked the async runtime, HTTP, WebSocket, and hot code loading phases complete, and repaired the malformed `[1.3.1]`/`[1.3.2]` entries.
+
+## [1.3.2] - 2026-09-27
+
+### Fixed
+
+- **SpawnListener vtable dispatch** — child actors spawned via `DynamicSupervisor`/`spawn_child` now properly invoke the vtable's `deserialize_fn`, `handle_message_fn`, and `drop_fn` via `unsafe` blocks. Previously the child loop polled the mailbox but did not actually dispatch to the actor handler. Added `StatePtr` wrapper (`unsafe impl Send + Sync`) to safely transport the raw state pointer across threads.
+
+## [1.3.1] - 2026-09-27
 
 ### Added
 

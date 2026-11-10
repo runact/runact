@@ -27,7 +27,7 @@ Runact is a lightweight actor runtime for Rust that provides a programming model
 * hot code loading (feature-gated)
 * observability
 
-Async tasks are a planned execution model described in the [Async Runtime](async-runtime.md) plan. Runact will execute standard Rust `Future`s on its own executor while keeping the actor model synchronous and cooperative.
+Async tasks execute standard Rust `Future`s on Runact's own executor (async task execution landed in v1.1.0) while the actor model stays synchronous and cooperative. See the [Async Runtime](async-runtime.md) boundary document.
 
 The goal is **not** to reproduce the BEAM internally.
 
@@ -1409,9 +1409,14 @@ Minimal dependencies, each with a clear architectural reason:
 ```toml
 [dependencies]
 crossbeam-channel = "0.5"  # Mailboxes and inter-thread communication
+libc = "0.2"               # epoll syscalls for the TCP reactor
 serde = { version = "1", features = ["derive"] }  # Serialization for ActorId
 tracing = "0.1"  # Observability
 thiserror = "1"  # Error handling
+
+[dependencies.libloading]
+version = "0.8"
+optional = true            # Dynamic library loading for `hot_code_loading`
 ```
 
 **No Tokio.** Runact owns its runtime semantics.
@@ -1442,6 +1447,7 @@ runact/
 │   ├── agents.md
 │   ├── object-model.md
 │   ├── protocol.md
+│   ├── hot-code-loading.md        # Pattern 2 dynamic supervision
 │   ├── development-plan.md       # Full platform architecture
 │   ├── runtime-networking-plan.md # Runtime + Networking extension plan
 │   ├── adr/
@@ -1449,6 +1455,7 @@ runact/
 │   │   ├── 0001-beam-style-scheduler.md
 │   │   ├── 0002-dual-scheduler-architecture.md
 │   │   └── 0003-native-async-runtime.md
+│   ├── book/                      # "The Runact Runtime" reference manual
 │   └── guides/
 │       ├── getting-started.md
 │       ├── supervision.md
@@ -1467,12 +1474,14 @@ runact/
 │   ├── resource/
 │   ├── net/            # TCP reactor, TcpListener, TcpStream (v1.2.0)
 │   ├── process/        # Process spawn, stdin/stdout/stderr (v1.2.0)
+│   ├── hotswap/        # Hot code loading, `hot_code_loading` feature (v1.3.0)
 │   └── runtime.rs
 ├── runact-web/         # HTTP layer (separate workspace member)
 │   ├── Cargo.toml
 │   └── src/
 ├── examples/
-│   └── counter.rs
+│   ├── counter.rs
+│   └── request_distributor.rs
 ├── benches/
 │   └── runact_bench.rs
 └── tests/

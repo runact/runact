@@ -1491,7 +1491,7 @@ Development phases are tracked in [Roadmap](roadmap.md). The roadmap is the auth
 
 This document describes the architecture and design. For implementation status, see the roadmap.
 
-### Current Status (v1.2.0)
+### Current Status (v1.3.2)
 
 | Phase | Name | Status |
 |-------|------|--------|
@@ -1503,22 +1503,22 @@ This document describes the architecture and design. For implementation status, 
 | 5 | Resources and Capabilities | ✅ Complete |
 | 7 | Async Runtime | ✅ Complete |
 | 9 | Runtime + Networking | ✅ Complete |
-| 10 | HTTP (runact-web) | Next |
+| 10 | HTTP (runact-web) | ✅ Complete |
+| 11 | Web Framework | 🟡 Partial (router, middleware, extractors; streaming and static files pending) |
+| 12 | WebSocket | ✅ Complete |
+| 13 | Real Applications | ✅ Complete (agent server + REST API examples) |
+| — | Hot Code Loading | ✅ Complete (v1.3.0–1.3.2, feature `hot_code_loading`) |
 
 ### Next Phases
 
-**Phase 10 — HTTP** (see roadmap.md)
-- Build `runact-web` as a separate workspace member
-- Start with HTTP/1.1, Request, Response, Headers, Parser, Encoder
+**Phase 8 — Programmability** (see roadmap.md)
+- Extension API, scripting integration, distributed actors
 
 **Phase 11 — Web Framework** (see roadmap.md)
-- Router, Handlers, Middleware, Extractors, Streaming, Static files
+- Streaming responses, static file serving
 
-**Phase 12 — WebSocket** (see roadmap.md)
-- Upgrade, Frames, Connection lifecycle, Streaming, Backpressure, Cancellation
-
-**Phase 13 — Real Applications** (see roadmap.md)
-- REST API, WebSocket server, AI agent server, Remote PaperOS server
+**Deferred — optional runtime adapters** (Phase 9 item)
+- Adapters (e.g. Tokio) only when a concrete library requires one; no core Tokio dependency
 
 ---
 

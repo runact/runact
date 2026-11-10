@@ -10,7 +10,7 @@ Add Runact to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-runact = "1.2"
+runact = "1.3"
 ```
 
 Minimum supported Rust version: **1.85** (edition 2024).

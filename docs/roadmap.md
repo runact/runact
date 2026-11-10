@@ -10,8 +10,8 @@ This document outlines the development phases for Runact. Runact is the runtime;
 
 | Component | Status | Tests |
 |-----------|--------|-------|
-| **Runact** (runtime) | v1.2.1 | 108 tests across actor, async, cancellation, compute, observability, process, reactor, resource, scheduler, stress, tcp_api, timer |
-| **runact-web** (HTTP) | v0.1.0 | 34 tests for HTTP Request, Response, Headers; 32 WebSocket tests (frame, async, server, chat, runact bridge) |
+| **Runact** (runtime) | v1.3.2 | 110 tests across lib unit, actor_task_integration, async_executor, async_timers, basic, cancellation, compute, observability, process_runtime, reactor, resource, scheduler, stress, tcp_api, timer (119 with `hot_code_loading`) |
+| **runact-web** (HTTP) | v0.3.0 | 89 tests: HTTP request, response, headers, router, middleware/extractors; WebSocket frames, async I/O, server, chat, runact bridge, fragmentation, agent server/API |
 | **Phase 9** (Runtime + Networking) | ✅ Complete | cancellation, timers, actor-async integration, process runtime, TCP reactor, TCP API, stress tests |
 | **Phase 10** (HTTP) | ✅ Complete | HTTP/1.1 parsing, request/response types, headers |
 | **Phase 12** (WebSocket) | ✅ Complete | Upgrade, frames, connection lifecycle, async I/O, heartbeats, runact TCP bridge, examples |
@@ -115,23 +115,23 @@ PaperOS is a separate project. Runact provides the foundation.
 
 ---
 
-## Phase 7 — Async Runtime
+## Phase 7 — Async Runtime ✅
 
-Planned. Runact will extend the runtime with a native async task system executing standard Rust `Future`s on its own executor, within the strict boundary defined by [Async Runtime](async-runtime.md): Runact schedules asynchronous work; I/O libraries define asynchronous work. See also [ADR-0003](adr/0003-native-async-runtime.md).
+Complete. Runact extends the runtime with a native async task system executing standard Rust `Future`s on its own executor, within the strict boundary defined by [Async Runtime](async-runtime.md): Runact schedules asynchronous work; I/O libraries define asynchronous work. See also [ADR-0003](adr/0003-native-async-runtime.md).
 
 Implemented in the order defined by async-runtime.md §20:
 
 ### Deliverables
 
-- Phase 1 — `Task`, `TaskHandle`, Executor, future polling
-- Phase 2 — Runact waker, runnable queue, wake deduplication (atomic task state)
-- Phase 3 — Async task scheduler integration
-- Phase 4 — Cancellation (`CancellationToken`, task cancellation)
-- Phase 5 — Timers (`sleep()`, `timeout()`)
-- Phase 6 — Actor ↔ async integration (`ctx.spawn(async { ... })`, result delivered as a message)
-- Phase 7 — Task groups (structured concurrency)
-- Phase 8 — Compute pool separation (CPU-heavy work off the async/actor workers)
-- Phase 9 — Optional runtime adapters (e.g. Tokio) only when a concrete library requires one
+- ✅ Phase 1 — `Task`, `TaskHandle`, Executor, future polling
+- ✅ Phase 2 — Runact waker, runnable queue, wake deduplication (atomic task state)
+- ✅ Phase 3 — Async task scheduler integration
+- ✅ Phase 4 — Cancellation (`CancellationToken`, task cancellation)
+- ✅ Phase 5 — Timers (`sleep()`, `timeout()`)
+- ✅ Phase 6 — Actor ↔ async integration (`ctx.spawn(async { ... })`, result delivered as a message)
+- ✅ Phase 7 — Task groups (structured concurrency)
+- ✅ Phase 8 — Compute pool separation (CPU-heavy work off the async/actor workers)
+- Phase 9 — Optional runtime adapters (e.g. Tokio) only when a concrete library requires one (not implemented; no library requires it)
 
 Success criteria:
 
@@ -186,6 +186,14 @@ Extractors
 Streaming
 Static files
 ```
+
+### Status: 🟡 Partial
+
+Implemented in `runact-web`:
+- ✅ `Router` with path parameters (`:id`) — `tests/router.rs` (11)
+- ✅ Middleware chain and extractors — `tests/middleware_extractors.rs` (8)
+- ⬜ Streaming responses
+- ⬜ Static file serving
 
 See [Development Plan](development-plan.md) §48 Phase 10.
 
@@ -277,12 +285,12 @@ This phase extends Runact into a small, Rust-native concurrency runtime for Pape
 - Actor remains responsive while async task waits
 
 **Phase 9d — Process Runtime** ✅
-- `runact-process` — spawn processes, stdin/stdout/stderr
+- `src/process/` — spawn processes, stdin/stdout/stderr
 - Exit status, timeout, cancellation, graceful termination
 - Prevent orphaned processes on agent cancellation
 
 **Phase 9e — TCP Reactor** ✅
-- `runact-net` — native async TCP with OS readiness integration
+- `src/net/` — native async TCP with OS readiness integration
 - Linux `epoll` first, abstraction for future platforms
 - `TcpListener`, `TcpStream`, read/write/connect/accept
 

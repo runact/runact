@@ -4,9 +4,9 @@ This file refines the global workflow (see `~/.config/opencode/AGENTS.md`) for t
 
 ## Project Identity
 
-Runact is a **Rust-native actor runtime** (v1.2.1, edition 2024, MSRV 1.85) — BEAM-style lightweight processes, messaging, scheduling, supervision, with Rust's ownership model. Workspace with `runact` (core) and `runact-web` (HTTP/WebSocket layer) members.
+Runact is a **Rust-native actor runtime** (v1.3.2, edition 2024, MSRV 1.85) — BEAM-style lightweight processes, messaging, scheduling, supervision, with Rust's ownership model. Workspace with `runact` (core) and `runact-web` (HTTP/WebSocket layer) members.
 
-Runact is extending toward a **native async task system** (standard Rust `Future` execution on its own executor) and **TCP networking** for remote AI agents. See:
+Runact's runtime extensions are a **native async task system** (standard Rust `Future` execution on its own executor), **TCP networking** for remote AI agents, and **hot code loading** (feature-gated). See:
 
 - `docs/async-runtime.md` — Async runtime boundary document
 - `docs/adr/0003-native-async-runtime.md` — ADR for native Future executor
@@ -21,7 +21,11 @@ src/
 ├── lib.rs          # Public module declarations + crate-root re-exports
 ├── actor/          # Actor trait, ActorId, ActorContext, ActorError (public)
 ├── compute/        # ComputeScheduler, ComputeHandle (public via root re-export)
+├── hotswap/        # Hot code loading: CodeManager, ActorFactory, DynamicSupervisor,
+│                   # SpawnListener, MigrationRegistry (public, feature `hot_code_loading`)
 ├── mailbox/        # Bounded mailbox + backpressure (private)
+├── net/            # TCP reactor (epoll), TcpListener, TcpStream (public)
+├── process/        # Process spawning with stdin/stdout/stderr, timeout, cancellation (public)
 ├── resource/       # Capability, ResourceHandle, ResourceRegistry (public)
 ├── runtime.rs      # Runtime, RuntimeConfig, RuntimeStats, RequestHandle (private module)
 ├── scheduler/      # BEAM-style scheduler, work stealing, reductions (private)
@@ -30,11 +34,15 @@ src/
 ├── timer/          # Timer, TimerService (public)
 └── error.rs        # RuntimeError
 
-tests/              # Integration tests — one file per feature area (basic, compute,
-                    # observability, resource, scheduler, timer, async_executor).
+tests/              # Integration tests — one file per feature area (actor_task_integration,
+                    # async_executor, async_timers, basic, cancellation, compute, observability,
+                    # process_runtime, reactor, resource, scheduler, stress, tcp_api, timer).
                     # These are the ACCEPTANCE layer: behavioral, hitting real entry points.
+                    # Hot code loading unit tests live inline in src/hotswap/tests.rs and run
+                    # only with `--features hot_code_loading`.
 benches/runact_bench.rs   # Criterion benchmarks (harness = false)
-docs/               # architecture.md, async-runtime.md, runtime-networking-plan.md, adr/, guides/, etc.
+docs/               # architecture.md, async-runtime.md, runtime-networking-plan.md,
+                    # hot-code-loading.md, adr/, guides/, book/, etc.
 runact-web/         # HTTP/WebSocket layer (separate crate, workspace member)
 ```
 
@@ -55,7 +63,7 @@ runact-web/         # HTTP/WebSocket layer (separate crate, workspace member)
 - **"Done" = full gate green + no scope creep.** Nothing else counts.
 - **No test, no feature.** Every requirement maps to a test that fails first.
 - **Fix the implementation, NEVER the test.** A failing test means the code is wrong.
-- **No new dependencies** (core deps are exactly: `crossbeam-channel`, `serde`, `tracing`, `thiserror`). Any addition needs an explicit architectural justification in the docs first.
+- **No new dependencies** (core deps are exactly: `crossbeam-channel`, `libc`, `serde`, `tracing`, `thiserror`, plus the optional `libloading` behind `hot_code_loading`). Any addition needs an explicit architectural justification in the docs first.
 - **No Tokio** in core dependencies. Specialized I/O libraries belong to applications, not the crate root.
 - **No type-error suppression** (`as any`/`unsafe`/`.unwrap()` in library code) — this is a `-D warnings` clippy/rustdoc gate anyway.
 - **Do not commit** unless explicitly asked.
@@ -81,11 +89,11 @@ Each file tests one feature area. Run all with `cargo test --all-targets`.
 
 | Crate | Tests | Suites |
 |-------|-------|--------|
-| runact | ~108 | actor, async_executor, basic, compute, observability, resource, scheduler, stress, tcp_api, timer |
-| runact-web | ~50 | WebSocket: ws_server, ws_chat, ws_runact_bridge, ws_fragmentation, ws_agent_server, ws_agent_api |
-|        |       | HTTP: request, response, headers, router |
-|        |       | Frame: websocket, async_websocket |
-| Total | ~160+ across 16 suites | 0 failures
+| runact | 110 | lib unit (7) + actor_task_integration, async_executor, async_timers, basic, cancellation, compute, observability, process_runtime, reactor, resource, scheduler, stress, tcp_api, timer (14 suites) |
+| runact (hot swap) | +9 | `src/hotswap/tests.rs`, run with `--features hot_code_loading` (119 total) |
+| runact-web | 89 | WebSocket: ws_server, ws_chat, ws_runact_bridge, ws_fragmentation, ws_agent_server, ws_agent_api, async_websocket, websocket |
+|        |       | HTTP: http_request, http_response, headers, router, middleware_extractors |
+| Total | 199 across 27 suites | 0 failures (208 with `hot_code_loading`)
 
 ## Definition of Done
 - [ ] Minimal implementation, matching sibling-file patterns
