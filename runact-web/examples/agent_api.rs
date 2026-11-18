@@ -83,7 +83,8 @@ fn extract_json_string(body: &str, key: &str) -> Option<String> {
 }
 
 fn main() {
-    let listener = runact::net::tcp_api::TcpListener::bind("127.0.0.1:8080").expect("bind");
+    let addr = std::env::var("AGENT_API_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    let listener = runact::net::tcp_api::TcpListener::bind(&addr).expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     eprintln!("agent_api: listening on {addr}");
     eprintln!("agent_api: try: curl http://{addr}/api/status");

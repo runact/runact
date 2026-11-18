@@ -156,16 +156,13 @@ fn test_fragmented_message_with_interleaved_ping() {
             let msg = rx
                 .recv_timeout(Duration::from_secs(5))
                 .expect("recv message");
-            match msg {
-                Message::Frame(frame) => {
-                    if frame.opcode == OpCode::Pong && frame.payload == b"ping" {
-                        got_pong = true;
-                    }
-                    if frame.opcode == OpCode::Text && frame.payload == b"abcINTERLEAVED" {
-                        got_text = true;
-                    }
+            if let Message::Frame(frame) = msg {
+                if frame.opcode == OpCode::Pong && frame.payload == b"ping" {
+                    got_pong = true;
                 }
-                _ => {}
+                if frame.opcode == OpCode::Text && frame.payload == b"abcINTERLEAVED" {
+                    got_text = true;
+                }
             }
         }
         assert!(

@@ -95,7 +95,8 @@ impl Actor for AgentActor {
 }
 
 fn main() {
-    let listener = runact::net::tcp_api::TcpListener::bind("127.0.0.1:8080").expect("bind");
+    let addr = std::env::var("AGENT_SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
+    let listener = runact::net::tcp_api::TcpListener::bind(&addr).expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     eprintln!("agent_server: listening on {addr}");
     eprintln!("agent_server: connect at ws://{addr}/agent");
