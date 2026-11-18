@@ -38,8 +38,13 @@ From `docs/async-runtime.md` §22:
    not return until this is complete.
 
 7. **Actors and async tasks remain fairly scheduled.**
-   Reduction counting and task budgets ensure neither actors nor async
-   tasks can starve each other.
+   Reduction counting and task budgets are intended to ensure neither actors
+   nor async tasks can starve each other.
+
+> **Implementation status (v1.3.3):** invariant 7 is aspirational. Actors
+> run as long-lived scheduler tasks and async tasks use a separate executor
+> pool, so there is no shared fairness mechanism. See
+> [Scheduler](../scheduler.md#implementation-status-v132).
 
 ## 19.2 Networking Invariants
 
@@ -76,19 +81,23 @@ From `docs/runtime-networking-plan.md` §30:
 
 ## 19.3 Hard Rules (from AGENTS.md)
 
-1. **No new dependencies** (core deps: `crossbeam-channel`, `serde`,
-   `tracing`, `thiserror`).
+1. **No new dependencies** (core deps: `crossbeam-channel`, `libc`,
+   `serde`, `tracing`, `thiserror`; optional `libloading` behind
+   `hot_code_loading`).
 
 2. **No Tokio in core.**
 
-3. **No type-error suppression** (`as any` / `unsafe` / `.unwrap()`
-   in library code).
+3. **No type-error suppression in library code** — `.unwrap()` is avoided
+   in the hot path; `unsafe` is confined to the hot-code-loading vtable
+   boundary (`hotswap/`) where raw state pointers are required.
 
-4. **Every public type is `#[must_use]`.**
+4. **Core public types are `#[must_use]`** where a dropped value would hide
+   a bug (e.g. `ActorId`, `Runtime`, handles, configs).
 
 5. **No `println!`/`eprintln!` in library code** — use `tracing`.
 
-6. **Error types use `thiserror`.**
+6. **Error types use `thiserror`** (`RuntimeError`, `ActorError`,
+   `TaskError`).
 
 7. **MSRV 1.85** — no language features newer than 1.85.
 

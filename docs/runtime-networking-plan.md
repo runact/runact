@@ -157,11 +157,11 @@ Do NOT create a custom async programming model.
 Basic API:
 
 ```rust
-runtime.spawn(future)
-runtime.sleep(duration)
-runtime.timeout(duration, future)
-runtime.compute(job)
-runtime.task_group()
+runtime.spawn_task(future)
+Runtime::sleep(duration)
+Runtime::timeout(duration, future)
+runtime.compute().spawn(job)
+TaskGroup::new()
 runtime.shutdown()
 ```
 
@@ -373,8 +373,8 @@ This is particularly important for remote AI agents.
 Implement:
 
 ```rust
-runtime.sleep(duration)
-runtime.timeout(duration, future)
+Runtime::sleep(duration)
+Runtime::timeout(duration, future)
 ```
 
 Start with a simple correct timer implementation.
@@ -392,7 +392,7 @@ CPU-heavy operations must not execute on ordinary async workers.
 Provide:
 
 ```rust
-runtime.compute(|| {
+runtime.compute().spawn(|| {
     expensive_operation()
 });
 ```

@@ -2,7 +2,24 @@
 
 ## Overview
 
-Runact uses a BEAM-style scheduler with work stealing. The scheduler multiplexes many actors over a relatively small number of OS threads.
+Runact uses a BEAM-style scheduler with work stealing.
+
+## Implementation Status (v1.3.3)
+
+The task queue, round-robin dispatch, work stealing and reduction counting
+described below are implemented. However, `Runtime::spawn` submits the
+**entire actor mailbox loop** as one task. A worker that pops that task runs
+the actor until shutdown, so:
+
+- only `worker_count()` actors make progress at a time;
+- an idle actor still holds its worker (polling `recv_timeout(10ms)`);
+- additional actors wait in run queues until an earlier actor stops.
+
+Measured on an 8-core machine: 8 of 20 spawned actors responded to
+`Runtime::request` within 300ms. BEAM-style actor multiplexing and parking
+are therefore **not yet implemented**. Work stealing currently applies to
+short-lived tasks; async task polling uses a separate executor pool, not
+this scheduler.
 
 ## Core Principle
 
@@ -275,9 +292,10 @@ tracing::trace!(actor_id = %id, "handling message");
 ### Phase 2 — Reliability
 
 - ✅ `src/supervision/` — Supervisor, ChildSpec, RestartStrategy
-- ✅ One-for-one restart strategy with exponential backoff
+- ✅ One-for-one restart accounting with exponential backoff (`SupervisorActor`, internal)
 - ✅ Crash isolation (compute tasks)
 - ✅ Restart limits
+- ⬜ Runtime wiring: spawning supervised children and reporting exits
 
 ### Phase 3 — Compute
 

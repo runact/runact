@@ -85,7 +85,8 @@ while let Ok(frame) = Frame::parse(&buffer) {
 1. **Control frames are delivered immediately.** They are never buffered
    as part of a fragmented message. This means a Ping arriving in the
    middle of a fragmented Text message is delivered as its own `Message`
-   before the reassembled message.
+   before the reassembled message. The server also auto-responds to each
+   Ping with a Pong carrying the same payload.
 
 2. **Reassembled frames preserve original metadata.** The delivered frame
    has `fin=true`, the original data opcode, and `masked=false` (server-side).

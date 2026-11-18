@@ -88,7 +88,7 @@ Examples:
 API concept:
 
 ```rust
-runtime.compute(|| {
+runtime.compute().spawn(|| {
     expensive_calculation()
 });
 ```
@@ -104,8 +104,8 @@ Runact owns runtime timers.
 Provide primitives such as:
 
 ```rust
-runtime.sleep(duration)
-runtime.timeout(duration, future)
+Runtime::sleep(duration)
+Runtime::timeout(duration, future)
 ```
 
 Start with a simple correct timer implementation.
@@ -127,7 +127,7 @@ CancellationToken
 Conceptually:
 
 ```rust
-let token = runtime.cancellation_token();
+let token = CancellationToken::new();
 
 token.cancel();
 token.is_cancelled();
@@ -317,16 +317,16 @@ These belong to specialized libraries or higher-level crates (e.g., `runact-web`
 Instead expose generic execution APIs:
 
 ```rust
-runtime.spawn(future)
-runtime.compute(job)
-runtime.sleep(duration)
-runtime.timeout(duration, future)
+runtime.spawn_task(future)
+runtime.compute().spawn(job)
+Runtime::sleep(duration)
+Runtime::timeout(duration, future)
 ```
 
 Example:
 
 ```rust
-let task = runtime.spawn(async move {
+let task = runtime.spawn_task(async move {
     let response = http_client.get(url).send().await?;
     Ok::<_, Error>(response)
 });
@@ -509,7 +509,7 @@ Bad:
 
 ```rust
 for item in millions {
-    runtime.spawn(process(item));
+    runtime.spawn_task(process(item));
 }
 ```
 
@@ -604,10 +604,11 @@ Runtime methods may include:
 ```rust
 Runtime::new()
 Runtime::spawn()
+Runtime::spawn_task()
 Runtime::compute()
 Runtime::sleep()
 Runtime::timeout()
-Runtime::task_group()
+TaskGroup::new()
 Runtime::shutdown()
 ```
 

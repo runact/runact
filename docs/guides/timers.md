@@ -19,7 +19,8 @@ runtime.schedule_timer(
 );
 
 // From inside an actor:
-ctx.schedule_timer(Duration::from_millis(500), "ping".to_string())?;
+ctx.schedule_timer(Duration::from_millis(500), "ping".to_string())
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 ## Periodic Timer
@@ -35,7 +36,8 @@ runtime.schedule_interval(
 );
 
 // From inside an actor:
-ctx.schedule_interval(Duration::from_secs(1), Tick)?;
+ctx.schedule_interval(Duration::from_secs(1), Tick)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 The message must implement `Clone + Send + Sync` because it is cloned for each tick.
@@ -56,7 +58,8 @@ This means intervals stay accurate even if message handling takes time.
 ```rust
 use runact::TimerId;
 
-let timer_id = ctx.schedule_timer(Duration::from_secs(10), "delayed".to_string())?;
+let timer_id = ctx.schedule_timer(Duration::from_secs(10), "delayed".to_string())
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 
 // Later, cancel it:
 ctx.cancel_timer(timer_id);

@@ -98,7 +98,8 @@ Capabilities can be sent as messages to other actors:
 
 ```rust
 // Grant a capability to another actor
-ctx.send_to(target, GrantFileAccess { capability: cap })?;
+ctx.send_to(target, GrantFileAccess { capability: cap })
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 The receiving actor can then use the capability in its own context.

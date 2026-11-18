@@ -38,8 +38,9 @@ impl Actor for DataProcessor {
                         match result {
                             Ok(value) => println!("Processed: {} bytes", value.len()),
                             Err(e) => eprintln!("Compute failed: {:?}", e),
-                            None => {} // Still running
                         }
+                        // `None` (still running) is handled by the outer
+                        // `if let Some(..)`, not by this match.
                     }
                 }
             }
@@ -100,9 +101,10 @@ The worker checks the cancellation flag before and after execution. If set befor
 Panics inside compute tasks are caught and surfaced as `ComputeError::WorkerPanic(msg)`. The worker thread survives and continues processing tasks.
 
 ```rust
-let handle = runtime.compute().spawn(|| -> String {
-    panic!("Compute task panicked!");
-});
+let handle = runtime
+    .compute()
+    .spawn(|| -> String { panic!("Compute task panicked!") })
+    .unwrap();
 
 match handle.recv() {
     Err(runact::ComputeError::WorkerPanic(msg)) => {
@@ -120,7 +122,7 @@ use runact::{Runtime, RuntimeConfig, ComputeConfig};
 let config = RuntimeConfig {
     compute: ComputeConfig {
         max_workers: 4,       // Defaults to available parallelism
-        queue_capacity: 1024,
+        queue_capacity: 1024, // Soft limit — queue is currently unbounded
         task_timeout: None,   // Reserved for future use
     },
     ..Default::default()

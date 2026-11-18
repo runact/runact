@@ -29,7 +29,7 @@ By default, mailboxes are **bounded**. The capacity is configurable via
 use runact::{Runtime, RuntimeConfig};
 
 let config = RuntimeConfig {
-    mailbox_capacity: 512,  // default: 1024
+    mailbox_capacity: 512,  // default: 1000
     ..RuntimeConfig::default()
 };
 let mut runtime = Runtime::with_config(config).unwrap();
@@ -101,8 +101,9 @@ Scheduler: yield Actor A, schedule Actor B
 Actor B: [msg3] → handle() → ... 
 ```
 
-The default budget is `MAX_REDUCTIONS` (typically a few hundred messages
-per turn). This ensures:
+The default budget is `MAX_REDUCTIONS` = 4000 message deliveries. When it
+is reached, the actor loop resets the counter and calls
+`std::thread::yield_now()`. This is intended to ensure:
 - **Fairness**: No single actor can monopolize a worker thread.
 - **Responsiveness**: All actors get a turn within a bounded time.
 - **Throughput**: Each actor processes multiple messages per scheduling
@@ -111,44 +112,39 @@ per turn). This ensures:
 ### Why It Matters
 
 Without reduction counting, a busy actor could process thousands of
-messages in a single scheduling turn, starving all other actors. With
-reductions, the runtime guarantees that N actors share N worker threads
-fairly, even if one actor is under heavy load.
+messages in a single scheduling turn, starving all other actors.
+
+> **Implementation status (v1.3.3):** the counter is wired into the actor
+> loop, but because each actor loop owns its scheduler task for its whole
+> lifetime, hitting the threshold only yields the OS thread — the same actor
+> resumes immediately. Cross-actor fairness is therefore not achieved yet.
+> See [Scheduler](../scheduler.md#implementation-status-v132).
 
 ## 6.5 Idle Actors
 
-When an actor's mailbox is empty, the actor is **parked** — it is
-removed from the scheduler's run queue. Parked actors consume **zero**
-scheduler resources.
+When an actor's mailbox is empty, it waits on `recv_timeout(10ms)` inside its
+own scheduler task.
 
-When a new message arrives:
-
-```
-Message arrives ──► mailbox (was empty)
+```text
+Message arrives ──► mailbox
     │
     ▼
-Scheduler: actor is now "ready" — push onto run queue
-    │
-    ▼
-Worker polls actor: handle(msg) for up to MAX_REDUCTIONS messages
+Actor loop wakes (≤10ms later) and calls handle(msg)
 ```
 
-This is why Runact can have hundreds of thousands of actors that spend
-most of their time idle — they cost nothing when parked, and wake up
-instantly when a message arrives.
+> **Implementation status (v1.3.3):** idle actors are **not** parked off the
+> run queue — each actor loop stays on its worker. This is why only
+> `worker_count()` actors can make progress at once. Parking and re-queueing
+> on message arrival are design goals, not current behavior.
+
 
 ## 6.6 Mailbox Internals
 
-The mailbox is implemented as a `BoundedMailbox` struct (private to the
-runtime):
+The runtime mailbox is a `crossbeam_channel::bounded` queue created per
+actor in `Runtime::spawn`:
 
 ```rust
-// Simplified — not public API
-struct BoundedMailbox {
-    sender: crossbeam_channel::Sender<MessageEnvelope>,
-    receiver: crossbeam_channel::Receiver<MessageEnvelope>,
-    capacity: usize,
-}
+let (tx, rx) = crossbeam_channel::bounded::<MessageEnvelope>(self.mailbox_capacity);
 ```
 
 Each actor has exactly one mailbox. The `ActorId` →

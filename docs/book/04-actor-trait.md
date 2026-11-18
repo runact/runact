@@ -52,7 +52,7 @@ This is called for **every** message the actor receives. Key points:
 
 ## 4.2 Returning Errors
 
-The `ActorError` enum has three variants:
+The `ActorError` enum has four variants:
 
 ```rust
 pub enum ActorError {
@@ -79,9 +79,11 @@ fn handle(&mut self, msg: MyMessage, ctx: &mut ActorContext)
 }
 ```
 
-When `handle` returns `Err`, the supervisor decides what to do. By default,
-`OneForOne` strategy restarts the actor with exponential backoff. The
-actor's `handle` is then called again for the next message in its mailbox.
+When `handle` returns `Err`, the error is currently discarded by the actor
+loop (`let _ = actor.handle(...)`); no supervisor is notified yet. The
+intended behavior is for `OneForOne` supervision to restart the actor with
+exponential backoff. The actor's `handle` is then called for the next
+message in its mailbox.
 
 > **Note:** `handle` does NOT receive an `init` or `started` callback in
 > the current API. Actors are initialized when spawned — just set up state
@@ -210,14 +212,16 @@ type safety and is slower.
 ```
 spawn(Actor) ──► [mailbox: empty] ──► message ──► handle() ──► Ok/Err
                                     ┌─────────────► (mailbox drains)
-                                    └─► no more msgs ──► idle (parked)
+                                    └─► no more msgs ──► idle (waits in its task)
 ```
 
-When an actor has no messages, it is **parked** — it consumes no scheduler
-resources. When a message arrives, the scheduler unparks one worker to
-process it. This is how Runact achieves massive actor counts (thousands or
-millions of idle actors) without performance cost.
+When an actor has no messages, it waits on a timed receive inside its own
+scheduler task.
 
-When `handle` returns `Err(ActorError::Panic(..))`, the actor has panicked.
-The supervisor will restart it (if configured). When `Err(ActorError::Cancelled)`
-is returned, the actor is explicitly being shut down.
+> **Implementation status (v1.3.3):** actors are **not** parked off the run
+> queue. Each actor loop keeps its worker (polling `recv_timeout(10ms)`), so
+> only `worker_count()` actors make progress at a time and idle actors still
+> occupy a worker. See [Scheduler](../scheduler.md#implementation-status-v132).
+
+When `handle` returns `Err`, the error is currently discarded; no supervisor
+is notified and no restart happens yet.

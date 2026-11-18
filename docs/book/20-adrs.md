@@ -17,9 +17,14 @@ it steals work from another worker's queue. Actors are scheduled using
 reduction counting (a budget of work per turn).
 
 **Consequences**:
-- Fair scheduling across all actors.
-- Low overhead for idle actors (parked, no polling).
+- Fair scheduling across all actors (design goal).
+- Low overhead for idle actors (design goal).
 - Natural scaling with CPU cores.
+
+> **Implementation status (v1.3.3):** the scheduler work-steals tasks, but
+> each actor loop occupies its worker for its lifetime, so idle actors are
+> not parked and only `worker_count()` actors progress at once. See
+> [Scheduler](../scheduler.md#implementation-status-v132).
 
 ## 20.2 ADR-0002: Dual Scheduler Architecture
 

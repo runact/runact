@@ -53,7 +53,7 @@ fn main() {
     runtime.send(id, "world".to_string()).unwrap();
 
     // 4. Shut down
-    runtime.shutdown();
+    runtime.shutdown().unwrap();
 }
 ```
 
@@ -181,6 +181,12 @@ stop. It blocks until they finish or the shutdown timeout expires. After
    `Hello, world!`.
 5. `shutdown()` drains all pending work and joins worker threads.
 
+> **Implementation status (v1.3.3):** step 2 enqueues one long-lived task
+> that runs the actor's mailbox loop. That worker stays with the actor until
+> shutdown, so only `worker_count()` actors make progress at a time (on an
+> 8-core machine, 8 of 20 spawned actors respond). See
+> [Scheduler](../scheduler.md#implementation-status-v132).
+
 ## 3.5 Making It Do Work
 
 The `Greeter` above is trivial — it prints and exits. Real actors use
@@ -222,7 +228,7 @@ fn main() {
     let mut runtime = Runtime::new().unwrap();
     let id = runtime.spawn(Ticker { remaining: 3 }).unwrap();
     runtime.send(id, ()).unwrap();
-    runtime.shutdown();
+    runtime.shutdown().unwrap();
 }
 ```
 

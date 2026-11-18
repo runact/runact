@@ -182,7 +182,8 @@ impl Actor for Counter {
     fn handle(&mut self, msg: CounterMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
         match msg {
             CounterMessage::GetValue => {
-                ctx.reply(self.count)?;
+                ctx.reply(self.count)
+                    .map_err(|e| ActorError::Handler(e.to_string()))?;
             }
         }
         Ok(())
@@ -256,7 +257,8 @@ impl Actor for CounterActor {
                 self.count = self.count.saturating_sub(1);
             }
             CounterMessage::GetValue => {
-                ctx.reply(self.count)?;
+                ctx.reply(self.count)
+                    .map_err(|e| ActorError::Handler(e.to_string()))?;
             }
         }
         Ok(())
@@ -286,7 +288,8 @@ impl Actor for ForwardActor {
             }
             ForwardMessage::Forward(text) => {
                 if let Some(target) = self.target {
-                    ctx.send_to(target, LoggerMessage::Log(text))?;
+                    ctx.send_to(target, LoggerMessage::Log(text))
+                        .map_err(|e| ActorError::Handler(e.to_string()))?;
                 }
             }
         }
@@ -317,7 +320,8 @@ impl Actor for DataProcessor {
                 let handle = ctx.spawn_compute(move || {
                     // CPU-intensive work on compute pool
                     data.iter().map(|b| b.wrapping_add(1)).collect()
-                })?;
+                })
+                .map_err(|e| ActorError::Handler(e.to_string()))?;
                 self.pending = Some(handle);
             }
             DataMsg::CheckResult => {
@@ -325,11 +329,13 @@ impl Actor for DataProcessor {
                     if let Some(result) = handle.try_recv() {
                         match result {
                             Ok(value) => {
-                                ctx.reply(value)?;
+                                ctx.reply(value)
+                                    .map_err(|e| ActorError::Handler(e.to_string()))?;
                                 self.pending = None;
                             }
                             Err(e) => {
-                                ctx.reply(ComputeError::WorkerPanic(e.to_string()))?;
+                                ctx.reply(ComputeError::WorkerPanic(e.to_string()))
+                                    .map_err(|e| ActorError::Handler(e.to_string()))?;
                             }
                         }
                     }
@@ -339,11 +345,13 @@ impl Actor for DataProcessor {
                 if let Some(ref handle) = self.pending {
                     match handle.recv_timeout(Duration::from_secs(1)) {
                         Ok(value) => {
-                            ctx.reply(value)?;
+                            ctx.reply(value)
+                                .map_err(|e| ActorError::Handler(e.to_string()))?;
                             self.pending = None;
                         }
                         Err(e) => {
-                            ctx.reply(e)?;
+                            ctx.reply(e)
+                                .map_err(|e| ActorError::Handler(e.to_string()))?;
                         }
                     }
                 }
@@ -362,7 +370,7 @@ impl Actor for DataProcessor {
 4. **Handle all cases** — Use exhaustive matching
 5. **Don't block** — Process message and yield back to the scheduler
 6. **Use compute pool for CPU work** — Never do long-running computation in an actor handler
-7. **Design for failure** — What happens if handler panics? (Compute tasks are isolated; actor panics are surfaced to supervisors.)
+7. **Design for failure** — Compute tasks are isolated (a panic becomes `ComputeError::WorkerPanic`); actor handler errors and panics are currently discarded by the runtime, and supervision is not wired yet.
 8. **Use timers for delays** — Don't `thread::sleep` inside actors
 9. **Reply to requests** — If `ctx.is_request()`, consider replying
 10. **Cancel timers you no longer need** — Prevents stale message delivery

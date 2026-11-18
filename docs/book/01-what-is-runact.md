@@ -116,7 +116,7 @@ fn main() {
     let mut runtime = Runtime::new().unwrap();
     let id = runtime.spawn(Greeter).unwrap();
     runtime.send(id, "world".to_string()).unwrap();
-    runtime.shutdown();
+    runtime.shutdown().unwrap();
 }
 ```
 

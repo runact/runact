@@ -355,6 +355,12 @@ join()
 task_group()
 ```
 
+> **Implementation status (v1.3.3):** `Runtime::spawn_task`, `Runtime::sleep`,
+> `Runtime::timeout`, `TaskHandle` (the join point), `CancellationToken`, and
+> `TaskGroup` exist. There is no `Runtime::task_group()` factory and no
+> `cancel()` method on `Runtime`; use `TaskGroup::new()` and
+> `TaskGroup::cancel()`.
+
 Conceptually:
 
 ```text
@@ -536,7 +542,7 @@ CPU-heavy work must not block actor or I/O workers.
 Provide:
 
 ```rust
-runtime.compute(|| {
+runtime.compute().spawn(|| {
     expensive_operation()
 });
 ```
@@ -815,7 +821,7 @@ let listener = TcpListener::bind("0.0.0.0:8080").await?;
 loop {
     let stream = listener.accept().await?;
 
-    runtime.spawn(handle_connection(stream));
+    runtime.spawn_task(handle_connection(stream));
 }
 ```
 
@@ -1314,6 +1320,10 @@ Runtime::shutdown()
 Runtime::shutdown_with_timeout()
 ```
 
+> **Implementation status (v1.3.3):** only `shutdown()` exists; the timeout
+> is taken from `RuntimeConfig::shutdown_timeout` (default 5s). A separate
+> `shutdown_with_timeout` method is not implemented.
+
 Shutdown:
 
 ```text
@@ -1491,13 +1501,13 @@ Development phases are tracked in [Roadmap](roadmap.md). The roadmap is the auth
 
 This document describes the architecture and design. For implementation status, see the roadmap.
 
-### Current Status (v1.3.2)
+### Current Status (v1.3.3)
 
 | Phase | Name | Status |
 |-------|------|--------|
 | 0 | Architecture | ✅ Complete |
 | 1 | Runtime Core | ✅ Complete |
-| 2 | Reliability (Supervision) | ✅ Complete |
+| 2 | Reliability (Supervision) | 🟡 Partial (types + restart accounting; runtime wiring pending) |
 | 3 | Compute | ✅ Complete |
 | 4 | Timers | ✅ Complete |
 | 5 | Resources and Capabilities | ✅ Complete |
@@ -1667,6 +1677,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+> **Design sketch (not implemented):** `Runtime::block_on`, the `runact::web`
+> module, and `App` do not exist as of v1.3.3. The current web layer is
+> `runact-web` (`Router`, `Request`, `Response`, `WebSocketServer`) and async
+> tasks are spawned with `Runtime::spawn_task`.
 
 The application developer sees:
 

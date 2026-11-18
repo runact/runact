@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted — implemented in v1.1.0 (API names updated in v1.3.2)
 
 ## Date
 
@@ -42,7 +42,20 @@ Implement a **native Runact executor** that:
 - Users write ordinary `async`/`await` Rust code with no Tokio coupling in the core API.
 - Pending async tasks consume no worker execution time (the core scheduling invariant).
 - Timers integrate with the scheduler instead of one-thread-per-timer.
-- The public API stays small: `Runtime::spawn`, `Runtime::compute`, `Runtime::sleep`, `Runtime::timeout`, `Runtime::task_group`, `TaskHandle`, `CancellationToken`.
+- The public API stays small: `Runtime::spawn_task`, `Runtime::compute`, `Runtime::sleep`, `Runtime::timeout`, `TaskGroup`, `TaskHandle`, `CancellationToken`.
+
+### Implementation Notes (v1.3.3)
+
+The shipped executor matches the decision in outline with these specifics:
+
+- `Runtime::spawn_task(future)` submits to `task::Executor`; there is no
+  `Runtime::spawn` overload for futures (that name is for actors).
+- `TaskGroup` is constructed with `TaskGroup::new()`; `spawn` takes
+  `&Runtime` and a future, and `cancel()` cancels the group.
+- `Runtime::sleep`/`Runtime::timeout` are associated functions implemented
+  with a thread + channel per future, not a scheduler-integrated timer wheel.
+- The executor polls futures on its own worker pool rather than the actor
+  scheduler's run queues; the two do not share a fairness mechanism yet.
 
 ### Negative
 

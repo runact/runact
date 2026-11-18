@@ -7,9 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.3] - 2026-11-18
+
 ### Changed
 
-- **Documentation** — synced `AGENTS.md`, `docs/roadmap.md`, `docs/development-plan.md`, and `docs/architecture.md` with the v1.3.x codebase: corrected the version (v1.3.2), added `hotswap`, `net`, and `process` to the module layout, documented the `libc` and optional `libloading` dependencies, refreshed test counts (199 tests across 27 suites; 208 with `hot_code_loading`), marked the async runtime, HTTP, WebSocket, and hot code loading phases complete, and repaired the malformed `[1.3.1]`/`[1.3.2]` entries.
+- **Documentation** — synced the docs with the v1.3.3 codebase. Corrected API references (`RuntimeSender::request`, no `RuntimeSender::spawn`, real `RuntimeError` variants, `ComputeHandle::recv(&self)`), fixed code examples that used removed/incorrect signatures (`ctx.spawn`, `TaskGroup::new(token)`, `WebSocketServer::bind("addr/path")`, `Response::default()`), and added explicit implementation-status notes where the docs described behavior the runtime does not yet implement:
+  - **Supervision** — `Runtime::spawn_supervisor` registers a supervisor but does not spawn children or receive exits; automatic restarts are not wired.
+  - **Scheduler** — actors each occupy a scheduler task for their lifetime, so only `worker_count()` actors make progress at once; per-actor multiplexing/parking is not implemented.
+  - **Async actor bridging** — `ActorContext` has no `spawn`; tasks must be spawned from outside and results delivered by message.
+  - **Compute** — the queue is unbounded and `ComputeError::QueueFull` is never produced.
+  - **TCP** — `TcpStream::read` maps `WouldBlock` to `Ok(0)` and does not retry.
+  - **Hot code loading** — `DynamicSupervisor` construction needs an `Arc<ActorFactory>` that the public API does not expose yet.
+- **Documentation** — refreshed version references from v1.0.0 to v1.3.3 in `protocol.md`, `agents.md`, `transactions.md`, `persistence.md`, `extensions.md`, and ADR-0003 (status: Accepted).
+
+### Fixed
+
+- **runact-web integration tests** — `ws_agent_api` and `ws_agent_server` no longer invoke `cargo run` from inside `cargo test` (the nested cargo blocked on the build lock held by the test harness, so the server was not ready in time and was left orphaned on port 8080). They now launch the prebuilt example binaries directly, wait for readiness by polling `connect`, and kill the child on drop. `agent_api` and `agent_server` accept `AGENT_API_ADDR` / `AGENT_SERVER_ADDR` to bind an ephemeral port, so the suites no longer collide on a fixed port.
 
 ## [1.3.2] - 2026-09-27
 

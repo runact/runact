@@ -41,7 +41,8 @@ impl Actor for Hasher {
         // This closure runs on the compute pool, not on the actor worker
         let handle = ctx.spawn_compute(move || {
             sha256_heavy_computation(&msg.data)
-        })?;
+        })
+        .map_err(|e| ActorError::Handler(e.to_string()))?;
 
         // Store the handle to poll later
         self.pending.insert(msg.request_id, handle);
@@ -94,7 +95,8 @@ match handle.recv_timeout(Duration::from_secs(10)) {
 before executing the task:
 
 ```rust
-let handle = ctx.spawn_compute(|| expensive_thing())?;
+let handle = ctx.spawn_compute(|| expensive_thing())
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 
 // If the actor receives a Cancel message before the task starts:
 handle.cancel();
@@ -120,7 +122,7 @@ use runact::{Runtime, RuntimeConfig, ComputeConfig};
 let config = RuntimeConfig {
     compute: ComputeConfig {
         max_workers: 4,       // defaults to available_parallelism
-        queue_capacity: 1024, // bounded — backpressure when full
+        queue_capacity: 1024, // soft limit (queue is currently unbounded)
         task_timeout: None,
     },
     ..RuntimeConfig::default()
@@ -130,8 +132,10 @@ let mut runtime = Runtime::with_config(config).unwrap();
 
 ### Queue Capacity and Backpressure
 
-When the compute queue is full and you call `spawn_compute`, it returns
-`ComputeError::QueueFull`. The actor must handle this:
+The compute queue uses `crossbeam_channel::unbounded`, so submissions are
+not rejected today and `ComputeError::QueueFull` is never returned.
+`queue_capacity` is recorded in the config as a soft limit for future
+bounded-queue support; do not rely on it for backpressure yet.
 
 ```rust
 match ctx.spawn_compute(|| heavy_work()) {

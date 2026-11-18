@@ -4,6 +4,12 @@ Supervision is Runact's fault-tolerance mechanism. A `Supervisor` manages
 a tree of child actors, restarting them when they crash according to a
 configurable `RestartStrategy`.
 
+> **Implementation status (v1.3.3):** the strategy/child types and restart
+> accounting exist, but the runtime does not yet spawn supervised children or
+> receive actor exit notifications. `Runtime::spawn_supervisor` registers a
+> supervisor entry and returns its `ActorId`; automatic restarts are not
+> wired. The flow in §7.5 describes the intended behavior.
+
 ---
 
 ## 7.1 Why Supervision?
@@ -159,14 +165,18 @@ When the supervisor restarts `Worker`, a new instance is created with
 fresh state. The old state (including any corrupted or inconsistent
 fields) is gone.
 
+> **Note (v1.3.3):** handler errors and panics are currently not observed by
+> the runtime, so this restart does not happen automatically yet.
+
 ## 7.7 Supervisor as an Actor
 
-In Runact's current implementation, `Supervisor` is not itself an `Actor`
-trait implementor — it is managed by the runtime's internal supervision
-machinery. The `Supervisor` struct tracks child specs and restart counts
-and is used by `spawn_supervisor`. Future versions will expose the
-supervisor as a first-class actor that can receive `HealthCheck` messages
-and dynamic child specifications.
+In Runact's current implementation (v1.3.3), `Supervisor` is not an `Actor`
+implementor and is not driven by the runtime: `Runtime::spawn_supervisor`
+constructs it only to validate the child list and register an `ActorInfo`.
+The internal `SupervisorActor` holds the restart-accounting logic and is
+exercised by unit tests, but nothing spawns it in `Runtime`. Future versions
+will expose supervision as a first-class actor that receives child-exit
+notifications and dynamic child specifications.
 
 ## 7.8 Key Principles
 

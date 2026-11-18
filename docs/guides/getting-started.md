@@ -88,7 +88,8 @@ impl Actor for Echo {
 
     fn handle(&mut self, msg: String, ctx: &mut ActorContext) -> Result<(), ActorError> {
         if ctx.is_request() {
-            ctx.reply(format!("echo: {}", msg))?;
+            ctx.reply(format!("echo: {}", msg))
+                .map_err(|e| ActorError::Handler(e.to_string()))?;
         }
         Ok(())
     }
@@ -135,7 +136,8 @@ impl Actor for Forwarder {
     type Message = String;
 
     fn handle(&mut self, msg: String, ctx: &mut ActorContext) -> Result<(), ActorError> {
-        ctx.send_to(self.target, msg)?;
+        ctx.send_to(self.target, msg)
+            .map_err(|e| ActorError::Handler(e.to_string()))?;
         Ok(())
     }
 }
@@ -145,8 +147,8 @@ impl Actor for Forwarder {
 
 ## 5. Supervision
 
-Supervisors manage actor lifecycles. When a child crashes, the supervisor restarts it
-based on its strategy.
+Supervisors are configured with a strategy and child specs. (Supervision is
+not fully wired yet — see the status note after the example.)
 
 ```rust
 use runact::{Runtime, RestartStrategy, ChildSpec, RestartPolicy};
@@ -174,13 +176,18 @@ fn main() {
 }
 ```
 
+> **Implementation status (v1.3.3):** `spawn_supervisor` registers a
+> supervisor entry and returns its `ActorId`; it does not spawn the declared
+> children, and actors do not report exits, so no restart occurs yet. Spawn
+> workers yourself with `runtime.spawn` for now.
+
 ### Restart Strategies
 
 | Strategy | Behavior |
 |----------|----------|
-| `OneForOne` | Only the failed child is restarted |
-| `OneForAll` | All children are restarted |
-| `RestForOne` | Failed child + children started after it are restarted |
+| `OneForOne` | Only the failed child is restarted (the only variant today) |
+
+> `OneForAll` and `RestForOne` are design goals, not implemented.
 
 ### Restart Policies
 
@@ -206,7 +213,7 @@ async fn compute_value() -> i64 {
 }
 
 fn main() {
-    let runtime = Runtime::new().unwrap();
+    let mut runtime = Runtime::new().unwrap();
 
     // Spawn an async task
     let handle = runtime.spawn_task(compute_value()).unwrap();
@@ -233,10 +240,10 @@ async fn delayed_work() -> String {
 }
 
 fn main() {
-    let runtime = Runtime::new().unwrap();
+    let mut runtime = Runtime::new().unwrap();
 
-    // Run with a timeout
-    let result = runtime.timeout(Duration::from_millis(500), delayed_work());
+    // Run with a timeout (associated function — call it as Runtime::timeout)
+    let result = Runtime::timeout(Duration::from_millis(500), delayed_work());
     let handle = runtime.spawn_task(result).unwrap();
 
     match handle.recv_timeout(Duration::from_secs(2)) {
@@ -299,10 +306,11 @@ fn main() {
 
 ### TaskGroup
 
-Structured concurrency — all tasks in the group are cancelled when the scope exits.
+Structured concurrency — tasks spawned through a group share one
+cancellation token.
 
 ```rust
-use runact::{TaskGroup, Runtime};
+use runact::{Runtime, TaskGroup};
 use std::time::Duration;
 
 async fn worker(id: u32) {
@@ -313,22 +321,25 @@ async fn worker(id: u32) {
 }
 
 fn main() {
-    let runtime = Runtime::new().unwrap();
+    let mut runtime = Runtime::new().unwrap();
+    let group = TaskGroup::new();
 
-    runtime.spawn_task(async {
-        let mut group = TaskGroup::new();
-        group.spawn(worker(1));
-        group.spawn(worker(2));
+    // TaskGroup::spawn takes the runtime explicitly
+    let _ = group.spawn(&runtime, worker(1));
+    let _ = group.spawn(&runtime, worker(2));
 
-        // All tasks run until we cancel the group
-        Runtime::sleep(Duration::from_secs(1)).await;
-        group.cancel_all();
-    }).unwrap();
+    // Let them run, then cancel the whole group
+    std::thread::sleep(Duration::from_secs(1));
+    group.cancel();
 
-    std::thread::sleep(Duration::from_secs(2));
+    std::thread::sleep(Duration::from_millis(300));
     runtime.shutdown().unwrap();
 }
 ```
+
+`group.cancel()` cancels each task's token; tasks stop when they next check
+it (cooperative). Dropping the group does **not** cancel children, so call
+`cancel()` explicitly.
 
 ---
 
@@ -358,13 +369,17 @@ impl Actor for DataProcessor {
                 let handle = ctx.spawn_compute(move || {
                     // CPU-intensive work
                     data.iter().map(|b| b.wrapping_add(1)).collect()
-                })?;
+                })
+                .map_err(|e| ActorError::Handler(e.to_string()))?;
                 self.pending = Some(handle);
             }
             DataMsg::CheckResult => {
                 if let Some(ref handle) = self.pending {
                     if let Some(result) = handle.try_recv() {
-                        println!("Processed {} bytes", result.len());
+                        match result {
+                            Ok(value) => println!("Processed {} bytes", value.len()),
+                            Err(e) => eprintln!("compute failed: {e:?}"),
+                        }
                     }
                 }
             }
@@ -387,7 +402,8 @@ use std::time::Duration;
 runtime.schedule_timer(Duration::from_secs(5), actor_id, "wake up".to_string());
 
 // From inside an actor:
-ctx.schedule_timer(Duration::from_millis(500), "ping".to_string())?;
+ctx.schedule_timer(Duration::from_millis(500), "ping".to_string())
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 ### Periodic Timer
@@ -396,7 +412,8 @@ ctx.schedule_timer(Duration::from_millis(500), "ping".to_string())?;
 use std::time::Duration;
 
 // From inside an actor:
-ctx.schedule_interval(Duration::from_secs(1), Tick)?;
+ctx.schedule_interval(Duration::from_secs(1), Tick)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 ### Cancel a Timer
@@ -477,6 +494,11 @@ fn main() {
 }
 ```
 
+> **Note:** `TcpStream::read` is non-blocking and maps `WouldBlock` to
+> `Ok(0)` — it does not distinguish "no data yet" from "peer closed". Loop
+> and retry (or use `read_exact`/`read_to_end`) if you need blocking-style
+> reads. `write_all` can also return `WouldBlock` under backpressure.
+
 ### TCP Client
 
 ```rust
@@ -513,7 +535,7 @@ fn main() {
 Type-safe, capability-based resource management.
 
 ```rust
-use runact::{ResourceHandle, Capability, ResourceRegistry};
+use runact::{ResourceHandle, Capability, ResourceRegistry, ActorId};
 use std::any::Any;
 
 #[derive(Debug)]
@@ -528,6 +550,9 @@ impl ResourceHandle for DatabaseConnection {
 
 fn main() {
     let registry = ResourceRegistry::new();
+
+    // The owning actor's ID (from Runtime::spawn in real code)
+    let actor_id = ActorId::new(1);
 
     // Register a capability
     let cap = Capability::new(
@@ -574,8 +599,8 @@ All actor lifecycle events are logged via `tracing`:
 | `info` | Actor spawned, actor stopped |
 | `debug` | Message sent, request sent |
 | `trace` | Per-message handling |
-| `warn` | Actor restarted |
-| `error` | Max restarts exceeded |
+| `warn` | Restart decision (internal supervisor actor only) |
+| `error` | Max restarts exceeded (internal supervisor actor only) |
 
 ```rust
 let stats = runtime.stats();
@@ -611,12 +636,12 @@ Shutdown is also called automatically when `Runtime` is dropped. The shutdown se
 
 ---
 
-## Complete Example: Web Worker Pool
+## Complete Example: Worker Pool
 
-A realistic example combining actors, supervision, and compute:
+A realistic example combining actors, the compute pool, and timers:
 
 ```rust
-use runact::{Actor, ActorContext, ActorError, Runtime, RestartStrategy, ChildSpec, RestartPolicy};
+use runact::{Actor, ActorContext, ActorError, Runtime};
 use std::time::Duration;
 
 struct Worker {
@@ -635,13 +660,13 @@ impl Actor for Worker {
         match msg {
             WorkerMsg::ProcessJob(job) => {
                 println!("Worker {} processing: {}", self.id, job);
-                // Offload CPU work to compute pool
                 let id = self.id;
                 ctx.spawn_compute(move || {
-                    // Simulate work
+                    // Simulate CPU work on the compute pool
                     std::thread::sleep(Duration::from_millis(100));
                     format!("Worker {} done with: {}", id, job)
-                })?;
+                })
+                .map_err(|e| ActorError::Handler(e.to_string()))?;
             }
             WorkerMsg::HealthCheck => {
                 println!("Worker {} healthy", self.id);
@@ -654,39 +679,37 @@ impl Actor for Worker {
 fn main() {
     let mut runtime = Runtime::new().unwrap();
 
-    // Supervised worker pool
-    let strategy = RestartStrategy::OneForOne {
-        max_restarts: 5,
-        within: Duration::from_secs(60),
-        base_backoff: Duration::from_millis(100),
-    };
-
-    let children: Vec<ChildSpec> = (0..4)
-        .map(|i| {
-            ChildSpec::new(format!("worker-{}", i))
-                .restart_policy(RestartPolicy::Permanent)
-        })
+    // Spawn a small worker pool
+    let workers: Vec<_> = (0..4)
+        .map(|id| runtime.spawn(Worker { id }).unwrap())
         .collect();
 
-    let supervisor = runtime.spawn_supervisor(strategy, children).unwrap();
-
-    // Send jobs
+    // Send jobs round-robin
     for i in 0..10 {
-        runtime.send(supervisor, WorkerMsg::ProcessJob(format!("job-{}", i))).unwrap();
+        let target = workers[i % workers.len()];
+        runtime
+            .send(target, WorkerMsg::ProcessJob(format!("job-{}", i)))
+            .unwrap();
     }
 
-    // Periodic health checks
-    runtime.schedule_interval(
-        Duration::from_secs(5),
-        supervisor,
-        WorkerMsg::HealthCheck,
-    );
+    // Periodic health checks (one timer per worker)
+    for &worker in &workers {
+        runtime.schedule_interval(
+            Duration::from_secs(5),
+            worker,
+            WorkerMsg::HealthCheck,
+        );
+    }
 
     // Run for a while
-    std::thread::sleep(Duration::from_secs(10));
+    std::thread::sleep(Duration::from_secs(2));
     runtime.shutdown().unwrap();
 }
 ```
+
+> The pool is spawned directly with `runtime.spawn`. Supervision is not
+> wired into the runtime yet, so there is no automatic restart if a worker
+> fails.
 
 ---
 

@@ -13,16 +13,17 @@ Runact's TCP layer follows the design principle from
 
 > TCP is the lowest-level network primitive.
 
-Runact provides blocking-style TCP I/O (with non-blocking retries) that
-actors can use directly. Higher-level protocols (HTTP, WebSocket, TLS,
-DNS) are implemented in `runact-web` or application code.
+Runact provides a small non-blocking TCP API with a few blocking-style
+helpers (`read_exact`, `read_to_end`, `accept`). Higher-level protocols
+(HTTP, WebSocket, TLS, DNS) are implemented in `runact-web` or application
+code.
 
 ### Threading Model
 
-Each `TcpStream` is non-blocking at the OS level, but the API provides
-blocking-style methods with internal retry loops. For concurrent handling,
-each connection typically gets its own thread (or actor + reader/writer
-threads).
+Sockets are non-blocking at the OS level. `accept`, `read_exact` and
+`read_to_end` retry on `WouldBlock` with a 1ms sleep; plain `read` and
+`write_all` do not. For concurrent handling, each connection typically gets
+its own thread (or actor + reader/writer threads).
 
 ## 12.2 TcpListener
 
@@ -64,12 +65,13 @@ let mut stream = TcpStream::connect("127.0.0.1:8080")?;
 
 ```rust
 let mut buf = [0u8; 4096];
-let n = stream.read(&mut buf)?;  // retries on WouldBlock
+let n = stream.read(&mut buf)?;  // non-blocking
 ```
 
-`read` returns `Ok(0)` on connection close. It retries on `WouldBlock`
-internally (with a 1ms sleep), providing a blocking-style interface over
-a non-blocking socket.
+`read` returns `Ok(0)` when the peer closes **or** when the OS reports
+`WouldBlock`/`ConnectionReset` — the stream is non-blocking and this method
+does not retry. A caller that needs a blocking-style read should loop (or use
+`read_exact`, which does retry).
 
 ### write_all + flush
 
@@ -77,6 +79,10 @@ a non-blocking socket.
 stream.write_all(b"HTTP/1.1 200 OK\r\n\r\nHello")?;
 stream.flush()?;
 ```
+
+Both delegate to `std::net::TcpStream`. Because the socket is non-blocking,
+`write_all` can return `WouldBlock` under backpressure; retry on that error
+if you need a blocking-style write.
 
 ### read_exact
 

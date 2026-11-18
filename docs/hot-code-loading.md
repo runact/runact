@@ -102,10 +102,18 @@ runtime.load_actor_module("MyActor", "/path/to/libmyactor_v2.so")?;
 
 ### Creating a DynamicSupervisor
 
-```rust
-use runact::{Actor, ActorContext, ActorError, DynamicSupervisor, Runtime, WorkPayload};
+`DynamicSupervisor::new` takes the module name and an `Arc<ActorFactory>`:
 
-// Define a work payload that can be serialized
+```rust
+pub fn new(module_name: &str, factory: std::sync::Arc<ActorFactory>) -> Self
+```
+
+The supervisor already implements `Actor` for `WorkerMessage<T, R>`, so you
+do not implement `Actor` yourself — spawn it directly:
+
+```rust
+use runact::{DynamicSupervisor, Runtime, WorkPayload, WorkerMessage, WorkItem, WorkerResponder};
+
 struct MyWork(String);
 impl WorkPayload for MyWork {
     fn to_bytes(&self) -> Vec<u8> {
@@ -113,23 +121,29 @@ impl WorkPayload for MyWork {
     }
 }
 
-// The supervisor is itself an actor
-impl Actor for DynamicSupervisor<MyWork, String> {
-    type Message = runact::WorkerMessage<MyWork, String>;
-    // ... handle method
-}
-
-// Spawn the supervisor
-let factory = runtime.actor_factory();
-let supervisor = DynamicSupervisor::new("MyActor", factory.clone());
+// `factory: Arc<ActorFactory>` — see the status note below.
+let supervisor = DynamicSupervisor::<MyWork, String>::new("MyActor", factory);
 let sup_id = runtime.spawn(supervisor).unwrap();
-
-// Submit work — a child is automatically spawned with the current version
-runtime.send(sup_id, runact::WorkerMessage::SubmitWork {
-    work: runact::WorkItem { id: 1, payload: MyWork("data".into()) },
-    responder: ...,
-});
 ```
+
+Submit work with a `WorkerResponder` backed by a channel:
+
+```rust
+let (tx, rx) = crossbeam_channel::bounded(1);
+
+runtime.send(sup_id, WorkerMessage::SubmitWork {
+    work: WorkItem { id: 1, payload: MyWork("data".into()) },
+    responder: WorkerResponder { sender: tx },
+}).unwrap();
+
+let result: Result<String, runact::WorkerError> = rx.recv().unwrap();
+```
+
+> **Implementation status (v1.3.3):** `Runtime::actor_factory()` returns
+> `&ActorFactory`, not the `Arc<ActorFactory>` that `DynamicSupervisor::new`
+> requires, and the runtime's `CodeManager` is private. The crate's own tests
+> construct the `Arc` directly; there is no public accessor yet. Version
+> inspection (`Runtime::module_version`) works through the public API.
 
 ## Code Upgrade Flow
 

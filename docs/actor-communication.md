@@ -34,7 +34,8 @@ runtime.send(actor_id, message)?;
 Or from inside an actor:
 
 ```rust
-ctx.send_to(target, message)?;
+ctx.send_to(target, message)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 It means:
@@ -294,13 +295,17 @@ Timeouts are application-level policy.
 For compute tasks, `ComputeHandle::recv_timeout` provides the same pattern:
 
 ```rust
-let handle = ctx.spawn_compute(|| expensive_work())?;
+let handle = ctx.spawn_compute(|| expensive_work())
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 match handle.recv_timeout(Duration::from_secs(5)) {
     Ok(value) => { /* use value */ }
-    Err(ComputeError::WorkerPanic("Timeout")) => { /* timed out */ }
+    Err(ComputeError::WorkerPanic(msg)) if msg == "Timeout" => { /* timed out */ }
     Err(e) => { /* other error */ }
 }
 ```
+
+> Note: `ComputeHandle::recv_timeout` reports an elapsed timeout as
+> `ComputeError::WorkerPanic("Timeout")`.
 
 ---
 
@@ -358,7 +363,8 @@ The sender doesn't care about a reply.
 This should be extremely cheap.
 
 ```rust
-ctx.send_to(target, Message::Notify)?;
+ctx.send_to(target, Message::Notify)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 ---
@@ -500,7 +506,10 @@ For example:
 ```rust
 // From an external thread — acceptable
 let handle = runtime.request(actor_id, msg)?;
-let reply: String = handle.recv()?;
+let reply = handle.recv()?;
+let text = *reply
+    .downcast::<String>()
+    .map_err(|_| RuntimeError::RuntimeStopped)?;
 ```
 
 But inside an actor handler:
@@ -508,7 +517,8 @@ But inside an actor handler:
 ```rust
 // Inside an actor handler — must NOT block the scheduler worker
 // Instead, submit compute and poll with try_recv
-let handle = ctx.spawn_compute(|| heavy_work())?;
+let handle = ctx.spawn_compute(|| heavy_work())
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 // Return from handler, poll later
 ```
 
@@ -516,7 +526,8 @@ So Runact has two APIs:
 
 ```rust
 // Actor context — non-blocking
-ctx.send_to(target, msg)?;
+ctx.send_to(target, msg)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 
 // External/blocking context — may block
 runtime.send_blocking(actor_id, msg)?;
@@ -542,7 +553,8 @@ fn handle(&mut self, msg: Message, ctx: &mut ActorContext) -> Result<(), ActorEr
     // State transition
     self.count += 1;
     // Effect
-    ctx.reply(self.count)?;
+    ctx.reply(self.count)
+        .map_err(|e| ActorError::Handler(e.to_string()))?;
     Ok(())
 }
 ```
@@ -638,7 +650,7 @@ Runtime catches failure (catch_unwind in compute worker)
 
 Compute tasks are isolated — panics are caught at the worker boundary and surfaced as `ComputeError::WorkerPanic(msg)`. The actor and worker thread survive.
 
-For actor handler panics (not currently caught in v1.0.0 but planned), the model is:
+For actor handler panics (not currently caught — as of v1.3.3 — but planned), the model is:
 
 ```text
 Actor

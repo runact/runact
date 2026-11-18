@@ -67,6 +67,8 @@ pub struct ActorContext {
     reply_sender: Option<ReplySender>,
     compute_sender: Option<crossbeam_channel::Sender<Task>>,
     timer_handle: Option<TimerHandle>,
+    #[cfg(feature = "hot_code_loading")]
+    spawn_tx: Option<crossbeam_channel::Sender<SpawnRequest>>,
 }
 ```
 
@@ -105,6 +107,28 @@ pub struct ActorInfo {
     pub mailbox_depth: usize,
 }
 ```
+
+---
+
+## RuntimeSender
+
+Clonable, thread-safe handle for messaging actors from outside the runtime.
+
+```rust
+#[derive(Clone)]
+pub struct RuntimeSender {
+    pub(crate) senders: Arc<RwLock<HashMap<ActorId, Sender<MessageEnvelope>>>>,
+    pub(crate) request_counter: Arc<AtomicU64>,
+}
+```
+
+Methods:
+
+- `send(target, msg)` — Fire-and-forget send (non-blocking)
+- `request(target, msg)` — Send a request, return a `RequestHandle`
+
+`RuntimeSender` does not expose `spawn`: spawning requires `&mut Runtime`.
+Its `request_counter` is a snapshot, not shared with the runtime's counter.
 
 ---
 

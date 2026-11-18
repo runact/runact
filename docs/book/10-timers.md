@@ -84,7 +84,8 @@ for each tick. `String`, `u32`, `Vec<u8>` all satisfy this.
 ### Returns TimerId
 
 ```rust
-let timer_id = ctx.schedule_interval(Duration::from_secs(30), Beat::Pulse)?;
+let timer_id = ctx.schedule_interval(Duration::from_secs(30), Beat::Pulse)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 ## 10.3 TimerId and Cancellation
@@ -106,7 +107,8 @@ impl Actor for Heartbeat {
         match msg {
             BeatMsg::Start => {
                 self.interval_id = Some(
-                    ctx.schedule_interval(Duration::from_secs(30), BeatMsg::Pulse)?
+                    ctx.schedule_interval(Duration::from_secs(30), BeatMsg::Pulse)
+                        .map_err(|e| ActorError::Handler(e.to_string()))?
                 );
             }
             BeatMsg::Pulse => {

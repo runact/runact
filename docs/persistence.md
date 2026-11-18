@@ -40,4 +40,4 @@ This pattern applies to any web application that needs durable state: session st
 
 ## Status
 
-This feature is not yet implemented in v1.0.0. The runtime provides actors, supervisors, and compute primitives that a persistence layer would build upon, but persistence itself is planned for a future version.
+This feature is not yet implemented (as of v1.3.3). The runtime provides actors, compute primitives, and `ActorId`'s `serde` support that a persistence layer would build upon, but persistence itself is planned for a future version.

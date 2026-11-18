@@ -9,31 +9,49 @@ server API and how to build WebSocket applications.
 
 ## 14.1 WebSocketServer
 
+`WebSocketServer::bind` takes an **accepted stream** plus the path to match;
+it does not bind a listening socket. Accept connections yourself, then hand
+each one to the server:
+
 ```rust
-use runact_web::websocket::server::WebSocketServer;
-use runact_web::websocket::server::ServerEvent;
+use runact_web::websocket::async_ws::WebSocketConfig;
+use runact_web::websocket::server::{ServerEvent, WebSocketServer};
+use std::time::Duration;
 
-let server = WebSocketServer::bind("127.0.0.1:8080/ws")?;
+let listener = std::net::TcpListener::bind("127.0.0.1:8080")?;
 
-server.accept_with_callback_and_config(
-    |writer, event| {
-        match event {
-            ServerEvent::Connected => {
-                println!("Client connected");
+for stream in listener.incoming() {
+    let stream = stream?;
+    std::thread::spawn(move || {
+        let server = match WebSocketServer::bind(stream, "/ws") {
+            Ok(server) => server,
+            Err(e) => {
+                eprintln!("handshake failed: {e}");
+                return;
             }
-            ServerEvent::Frame(frame) => {
-                writer.send_text(&frame.payload_as_text()).unwrap();
-            }
-            ServerEvent::Closed => {
-                println!("Client disconnected");
-            }
-            ServerEvent::Error(e) => {
-                eprintln!("Error: {}", e);
-            }
+        };
+
+        let config = WebSocketConfig {
+            ping_interval: Some(Duration::from_secs(30)),
+        };
+
+        let result = server.accept_with_callback_and_config(
+            |writer, event| match event {
+                ServerEvent::Connected => { /* writer is ready */ }
+                ServerEvent::Frame(frame) => {
+                    let _ = writer.send(&frame); // echo
+                }
+                ServerEvent::Closed => { /* peer closed */ }
+                ServerEvent::Error(e) => eprintln!("error: {e}"),
+            },
+            config,
+        );
+
+        if let Err(e) = result {
+            eprintln!("connection error: {e}");
         }
-    },
-    WebSocketConfig { ping_interval: Some(Duration::from_secs(30)) },
-)?;
+    });
+}
 ```
 
 ### ServerEvent
@@ -45,7 +63,7 @@ The callback receives `ServerEvent` variants:
 | `Connected` | Before reader loop | Client completed the WebSocket handshake |
 | `Frame(Frame)` | Each frame | A parsed WebSocket frame |
 | `Closed` | Connection closed | The peer closed the connection |
-| `Error(HandshakeError)` | Handshake failure | Invalid or malformed upgrade request |
+| `Error(String)` | I/O or framing failure | Error message |
 
 ### WebSocketConfig
 
@@ -55,9 +73,10 @@ pub struct WebSocketConfig {
 }
 ```
 
-When `ping_interval` is set, a background thread sends Ping frames at the
-configured interval. The peer must respond with Pong frames (auto-handled
-by the `AsyncWebSocket` reader).
+`WebSocketConfig` lives in `runact_web::websocket::async_ws` and implements
+`Default`. When `ping_interval` is set, a background thread sends Ping frames
+at the configured interval; the reader auto-responds to incoming Pings with
+Pongs.
 
 ## 14.2 Stream Abstraction
 
@@ -68,7 +87,7 @@ TCP streams:
 ### Standard TCP
 
 ```rust
-let server = WebSocketServer::<std::net::TcpStream>::bind("127.0.0.1:8080/ws")?;
+let server = WebSocketServer::<std::net::TcpStream>::bind(stream, "/ws")?;
 ```
 
 ### Runact TCP Bridge
@@ -76,12 +95,13 @@ let server = WebSocketServer::<std::net::TcpStream>::bind("127.0.0.1:8080/ws")?;
 ```rust
 use runact_web::websocket::runact_tcp::RunactTcpStream;
 
-let server = WebSocketServer::<RunactTcpStream>::bind("127.0.0.1:8080/ws")?;
+let adapter = RunactTcpStream(runact_stream);
+let server = WebSocketServer::<RunactTcpStream>::bind(adapter, "/ws")?;
 ```
 
-The `RunactTcpStream` adapter implements `Read`, `Write`, and
-`SetReadTimeout` (no-op, since runact's TCP is non-blocking with internal
-retry loops).
+The `RunactTcpStream` adapter is a tuple struct wrapping
+`runact::net::tcp_api::TcpStream` and implements `Read`, `Write`, and
+`SetReadTimeout` (no-op, since runact's TCP is non-blocking).
 
 ## 14.3 Frame API
 
@@ -117,6 +137,7 @@ to the client:
 
 ```rust
 impl ConnectionWriter {
+    pub fn send(&self, frame: &Frame) -> Result<(), SendError>;
     pub fn send_text(&self, text: &str) -> Result<(), SendError>;
     pub fn send_binary(&self, data: &[u8]) -> Result<(), SendError>;
     pub fn send_ping(&self, data: &[u8]) -> Result<(), SendError>;
@@ -137,20 +158,22 @@ pub enum SendError {
 ## 14.5 Echo Server Example
 
 ```rust
+use runact_web::websocket::async_ws::WebSocketConfig;
+use runact_web::websocket::frame::OpCode;
 use runact_web::websocket::server::{ServerEvent, WebSocketServer};
-use runact_web::websocket::WebSocketConfig;
 use std::time::Duration;
 
-let server = WebSocketServer::bind("127.0.0.1:8080/ws")?;
+// `stream` is an accepted TcpStream (std or RunactTcpStream).
+let server = WebSocketServer::bind(stream, "/ws")?;
 
 server.accept_with_callback_and_config(
     |writer, event| {
         match event {
             ServerEvent::Connected => println!("Client connected"),
             ServerEvent::Frame(frame) => {
-                // Echo back any text or binary frame
-                if !frame.fin || matches!(frame.opcode, OpCode::Text | OpCode::Binary) {
-                    let _ = writer.send_binary(&frame.payload);
+                // Echo back text and binary frames
+                if matches!(frame.opcode, OpCode::Text | OpCode::Binary) {
+                    let _ = writer.send(&frame);
                 }
             }
             ServerEvent::Closed => println!("Client disconnected"),

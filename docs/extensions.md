@@ -64,4 +64,4 @@ Extensions communicate through a versioned binary protocol using the `crossbeam-
 
 ## Status
 
-This feature is not yet implemented in v1.0.0. The runtime provides the foundational pieces (compute pool, timers, actors, supervision) that extensions would use, but the extension registration, discovery, and protocol negotiation are planned for a future version.
+This feature is not yet implemented (as of v1.3.3). The runtime provides the foundational pieces (compute pool, timers, actors) that extensions would use, but the extension registration, discovery, and protocol negotiation are planned for a future version.

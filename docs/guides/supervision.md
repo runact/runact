@@ -4,6 +4,13 @@
 
 Supervisors manage child actor lifecycles and handle failures. When a child crashes, the supervisor decides whether to restart it based on its strategy.
 
+> **Implementation status (v1.3.3):** the strategy types and restart
+> accounting exist (`RestartStrategy`, `ChildSpec`, `RestartPolicy`), but
+> `Runtime::spawn_supervisor` only registers a supervisor entry — it does
+> not spawn the declared children and actors do not report exits to it, so
+> no automatic restart happens yet. The restart/backoff description below is
+> the intended behavior.
+
 ## Creating a Supervisor
 
 ```rust
@@ -43,6 +50,9 @@ RestartStrategy::OneForOne {
 }
 ```
 
+`RestartStrategy::default()` is `OneForOne { max_restarts: 5, within: 60s,
+base_backoff: 100ms }`.
+
 ## Exponential Backoff
 
 When a child crashes repeatedly, the supervisor applies exponential backoff:
@@ -68,10 +78,14 @@ Backoff doubles each restart (via bit shift) and is capped at 30 seconds. If the
 
 ## Failure Handling
 
-### What is a Failure?
+### What Counts as a Failure?
 
-- Compute task panic (caught by compute worker, surfaced as `ComputeError::WorkerPanic`)
-- Actor handler returns `Err(ActorError)`
+- A compute task panic (caught by the compute worker, surfaced as `ComputeError::WorkerPanic`)
+- An actor handler returning `Err(ActorError)`
+
+> **Note:** the runtime currently discards actor handler errors
+> (`let _ = actor.handle(...)`) and does not catch handler panics. Neither is
+> propagated to a supervisor yet.
 
 ### What is NOT a Failure?
 
@@ -79,13 +93,13 @@ Backoff doubles each restart (via bit shift) and is capped at 30 seconds. If the
 - Compute task completes successfully
 - Actor stops gracefully (runtime shutdown)
 
-### Failure Flow
+### Intended Failure Flow
 
 ```text
 Child crashes
     │
     ▼
-Supervisor notified (via SupervisorMessage::ChildCrashed)
+Supervisor notified (internal SupervisorMessage::ChildCrashed)
     │
     ├── Check restart count vs max_restarts
     ├── Check backoff elapsed
@@ -97,25 +111,19 @@ Supervisor notified (via SupervisorMessage::ChildCrashed)
 
 ## Supervisor Status
 
-You can query supervisor status:
-
-```rust
-let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus).unwrap();
-let reply = handle.recv_timeout(Duration::from_secs(1)).unwrap();
-let statuses = reply.downcast::<Vec<ChildStatus>>().unwrap();
-
-for status in &statuses {
-    println!("{}: alive={}, restarts={}", status.name, status.alive, status.restart_count);
-}
-```
+`SupervisorMessage`/`ChildStatus` are currently internal to
+`src/supervision/supervisor_actor.rs`; they are not exported from the crate,
+so an application cannot query a supervisor through the public API. The
+internal actor answers `GetStatus` with `Vec<ChildStatus>`, which the crate's
+own unit tests use.
 
 ## Best Practices
 
 1. **Start simple** — OneForOne is usually sufficient
 2. **Set limits** — Always configure max_restarts to prevent infinite restart loops
 3. **Use backoff** — Give failing actors time to recover via base_backoff
-4. **Log failures** — All restart events are logged via tracing
-5. **Design for failure** — What happens if actor panics?
-6. **Test supervision** — Inject failures deliberately via `ChildCrashed` messages
+4. **Log failures** — Restart decisions are logged via `tracing`
+5. **Design for failure** — Decide what should happen if an actor panics
+6. **Test failure paths** — Exercise the error paths of your handlers
 7. **Choose Transient for stateless workers** — Only restart on crashes, not clean exits
 8. **Choose Permanent for critical services** — Always restart regardless of exit reason

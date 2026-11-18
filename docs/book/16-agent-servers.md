@@ -64,7 +64,7 @@ impl ModelAdapter for MockAdapter {
 
 ```rust
 struct AgentActor {
-    adapter: Box<dyn ModelAdapter>,
+    adapter: std::sync::Arc<dyn ModelAdapter>,
     runtime_sender: RuntimeSender,
 }
 
@@ -76,15 +76,18 @@ impl Actor for AgentActor {
     {
         match msg {
             AgentMessage::UserInput(input) => {
-                // Offload LLM call to compute pool
+                // Offload LLM call to compute pool. Clone the Arc so the
+                // closure is 'static (it cannot borrow `self`).
+                let adapter = std::sync::Arc::clone(&self.adapter);
                 let sender = self.runtime_sender.clone();
                 let conn_id = ctx.actor_id();
                 ctx.spawn_compute(move || {
-                    let response = self.adapter.generate(&input);
+                    let response = adapter.generate(&input);
                     // Forward response back to this actor
                     sender.send(conn_id, AgentMessage::LLMResponse(response))
                         .ok();
-                })?;
+                })
+                .map_err(|e| ActorError::Handler(e.to_string()))?;
             }
             AgentMessage::LLMResponse(response) => {
                 // Send response to the WebSocket client
@@ -103,32 +106,52 @@ impl Actor for AgentActor {
 
 ## 16.5 Bridging WebSocket to Actors
 
-Each WebSocket connection gets its own `AgentActor` instance:
+Each WebSocket connection gets its own `AgentActor` instance. Accept the
+connection first, then hand the stream to `WebSocketServer::bind`:
 
 ```rust
-let server = WebSocketServer::bind("127.0.0.1:8080/ws")?;
-let runtime_sender = runtime.sender();
+use runact_web::websocket::async_ws::WebSocketConfig;
+use runact_web::websocket::server::{ServerEvent, WebSocketServer};
 
-server.accept_with_callback_and_config(
-    |writer, event| {
-        match event {
-            ServerEvent::Connected => {
-                // Spawn a new AgentActor for this connection
-                // Note: Actor spawning requires &mut Runtime, so
-                // for external threads, use RuntimeSender for messaging only.
-                // In this example, the agent is pre-spawned.
+let listener = std::net::TcpListener::bind("127.0.0.1:8080")?;
+let runtime_sender = runtime.sender();
+// Spawn the agent actor(s) up front; only spawning needs `&mut Runtime`.
+let agent_id = runtime.spawn(AgentActor {
+    adapter: std::sync::Arc::new(MockAdapter),
+    runtime_sender: runtime_sender.clone(),
+})?;
+
+for stream in listener.incoming() {
+    let stream = stream?;
+    let sender = runtime_sender.clone();
+
+    std::thread::spawn(move || {
+        let server = match WebSocketServer::bind(stream, "/ws") {
+            Ok(server) => server,
+            Err(e) => {
+                eprintln!("handshake failed: {e}");
+                return;
             }
-            ServerEvent::Frame(frame) => {
-                // Forward the frame's text payload to the actor
-                let text = String::from_utf8_lossy(&frame.payload);
-                runtime_sender.send(agent_id, AgentMessage::UserInput(text.to_string()));
-            }
-            ServerEvent::Closed => { /* cleanup */ }
-            ServerEvent::Error(e) => { /* handle */ }
-        }
-    },
-    WebSocketConfig::default(),
-)?;
+        };
+
+        let _ = server.accept_with_callback_and_config(
+            |_writer, event| match event {
+                ServerEvent::Connected => {
+                    // Actor spawning requires &mut Runtime, so agents are
+                    // pre-spawned; RuntimeSender is for messaging only.
+                }
+                ServerEvent::Frame(frame) => {
+                    let text = String::from_utf8_lossy(&frame.payload);
+                    let _ = sender
+                        .send(agent_id, AgentMessage::UserInput(text.to_string()));
+                }
+                ServerEvent::Closed => { /* cleanup */ }
+                ServerEvent::Error(e) => eprintln!("error: {e}"),
+            },
+            WebSocketConfig::default(),
+        );
+    });
+}
 ```
 
 ### Key Patterns
@@ -146,16 +169,31 @@ server.accept_with_callback_and_config(
 See `examples/agent_server.rs` for the complete implementation. The example:
 
 ```rust
+use runact_web::websocket::async_ws::WebSocketConfig;
+use runact_web::websocket::server::WebSocketServer;
+
 fn main() {
     let mut runtime = Runtime::new().unwrap();
     let sender = runtime.sender();
 
-    let server = WebSocketServer::bind("127.0.0.1:8080/ws").unwrap();
-
-    server.accept_with_callback_and_config(
-        |writer, event| { /* forward messages to actor */ },
-        WebSocketConfig { ping_interval: Some(Duration::from_secs(30)) },
-    ).unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:8080").unwrap();
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+        let sender = sender.clone();
+        std::thread::spawn(move || {
+            let server = match WebSocketServer::bind(stream, "/ws") {
+                Ok(server) => server,
+                Err(e) => {
+                    eprintln!("handshake failed: {e}");
+                    return;
+                }
+            };
+            let _ = server.accept_with_callback_and_config(
+                |_writer, event| { /* forward messages to the actor via `sender` */ },
+                WebSocketConfig { ping_interval: Some(Duration::from_secs(30)) },
+            );
+        });
+    }
 }
 ```
 

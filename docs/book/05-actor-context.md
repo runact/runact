@@ -105,7 +105,8 @@ fn handle(&mut self, msg: Self::Message, ctx: &mut ActorContext)
 }
 
 // External code receives the reply
-let value: u64 = request_handle.recv().unwrap();
+let reply = request_handle.recv().unwrap();
+let value = *reply.downcast::<u64>().unwrap();
 ```
 
 If the message was sent fire-and-forget (via `send`), `ctx.is_request()`
@@ -116,7 +117,8 @@ returns `false` and `ctx.reply(...)` is a no-op.
 ### One-shot Timer
 
 ```rust
-ctx.schedule_timer(Duration::from_secs(5), WakeUp {})?;
+ctx.schedule_timer(Duration::from_secs(5), WakeUp {})
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 After 5 seconds, the actor receives `WakeUp {}`. The actor continues
@@ -126,14 +128,16 @@ timer service, not by blocking the actor.
 ### Periodic Timer (Interval)
 
 ```rust
-ctx.schedule_interval(Duration::from_secs(10), Tick {})?;
+ctx.schedule_interval(Duration::from_secs(10), Tick {})
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 The message must be `Clone + Send + Sync`. Each tick delivers a clone of
 the message. Returns a `TimerId` so you can cancel it later:
 
 ```rust
-let timer_id = ctx.schedule_interval(Duration::from_secs(10), Tick {})?;
+let timer_id = ctx.schedule_interval(Duration::from_secs(10), Tick {})
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 // ...
 ctx.cancel_timer(timer_id); // stops the interval
 ```
@@ -154,7 +158,8 @@ impl Actor for Heartbeat {
         match msg {
             HeartMsg::Start => {
                 self.interval_id = Some(
-                    ctx.schedule_interval(Duration::from_secs(30), HeartMsg::Beat)?
+                    ctx.schedule_interval(Duration::from_secs(30), HeartMsg::Beat)
+                        .map_err(|e| ActorError::Handler(e.to_string()))?
                 );
             }
             HeartMsg::Beat => {
@@ -177,7 +182,9 @@ impl Actor for Heartbeat {
 separate thread pool for CPU-intensive work. The actor is not blocked.
 
 ```rust
-struct DataProcessor;
+struct DataProcessor {
+    pending: std::collections::HashMap<u64, ComputeHandle<Vec<u8>>>,
+}
 
 impl Actor for DataProcessor {
     type Message = ProcessFile;
@@ -188,7 +195,8 @@ impl Actor for DataProcessor {
         let handle = ctx.spawn_compute(move || {
             // This runs on a compute worker thread
             expensive_hash_computation(&msg.data)
-        })?;
+        })
+        .map_err(|e| ActorError::Handler(e.to_string()))?;
 
         // Store the handle; check it later when the result is ready
         // (e.g., in response to a Poll message)
@@ -204,7 +212,8 @@ The `ComputeHandle<T>` lets you check if the work is done (see Chapter 11).
 
 ```rust
 let my_id = ctx.actor_id();
-ctx.send_to(other_actor, ForwardMsg { from: my_id })?;
+ctx.send_to(other_actor, ForwardMsg { from: my_id })
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 This is essential for:

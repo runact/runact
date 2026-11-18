@@ -64,7 +64,8 @@ impl Actor for Client {
     type Message = String;
     fn handle(&mut self, msg: String, ctx: &mut ActorContext) -> Result<(), ActorError> {
         // Forward the message to the server
-        ctx.send_to(self.server, msg)?;
+        ctx.send_to(self.server, msg)
+            .map_err(|e| ActorError::Handler(e.to_string()))?;
         Ok(())
     }
 }

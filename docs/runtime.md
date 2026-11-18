@@ -59,6 +59,8 @@ pub struct ActorContext {
     reply_sender: Option<ReplySender>,
     compute_sender: Option<crossbeam_channel::Sender<Task>>,
     timer_handle: Option<TimerHandle>,
+    #[cfg(feature = "hot_code_loading")]
+    spawn_tx: Option<crossbeam_channel::Sender<SpawnRequest>>,
 }
 ```
 
@@ -196,6 +198,14 @@ impl Scheduler {
 
 Workers spawn at `new()` and default to `available_parallelism()` count. The round-robin dispatch uses `next_worker.fetch_add(1, Ordering::Relaxed) % queues.len()`.
 
+> **Implementation status (v1.3.3):** the scheduler work-steals *tasks*, but
+> `Runtime::spawn` submits one long-lived task per actor (a loop that waits
+> on the mailbox). An actor therefore occupies its worker for its entire
+> lifetime, including while idle. On an 8-worker machine only 8 spawned
+> actors can process messages concurrently; additional actors wait in the
+> run queues. True BEAM-style per-actor multiplexing and parking is not yet
+> implemented. See [Scheduler](scheduler.md#implementation-status-v132).
+
 ### ReductionCounter
 
 ```rust
@@ -309,8 +319,8 @@ impl<T> ComputeHandle<T> {
     pub fn cancel(&self);
     pub fn is_cancelled(&self) -> bool;
     pub fn try_recv(&self) -> Option<Result<T, ComputeError>> where T: 'static;
-    pub fn recv(self) -> Result<T, ComputeError> where T: 'static;
-    pub fn recv_timeout(self, timeout: Duration) -> Result<T, ComputeError> where T: 'static;
+    pub fn recv(&self) -> Result<T, ComputeError> where T: 'static;
+    pub fn recv_timeout(&self, timeout: Duration) -> Result<T, ComputeError> where T: 'static;
 }
 ```
 
@@ -397,12 +407,15 @@ pub struct Runtime {
     scheduler: Scheduler,
     compute: ComputeScheduler,
     timers: TimerService,
+    tasks: Executor,
     actors: Arc<RwLock<HashMap<ActorId, ActorInfo>>>,
     senders: Arc<RwLock<HashMap<ActorId, crossbeam_channel::Sender<MessageEnvelope>>>>,
     request_counter: AtomicU64,
     stop: Arc<AtomicBool>,
     mailbox_capacity: usize,
     shutdown_timeout: Duration,
+    pending_actors: Arc<AtomicUsize>,
+    // Feature-gated fields (hot_code_loading): code_manager, factory, spawn_request_tx
 }
 
 impl Runtime {
@@ -414,6 +427,11 @@ impl Runtime {
     pub fn request<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<RequestHandle, RuntimeError>;
     pub fn request_blocking<M: Send + 'static, R: Send + 'static>(&self, target: ActorId, message: M, timeout: Option<Duration>) -> Result<R, RuntimeError>;
     pub fn spawn_supervisor(&self, strategy: RestartStrategy, children: Vec<ChildSpec>) -> Result<ActorId, RuntimeError>;
+    pub fn spawn_task<F, T>(&self, future: F) -> Result<TaskHandle<T>, TaskError>
+    where F: Future<Output = T> + Send + 'static, T: Send + 'static;
+    pub fn sleep(duration: Duration) -> SleepFuture;
+    pub fn timeout<F, T>(duration: Duration, future: F) -> TimeoutFuture<F>
+    where F: Future<Output = T>;
     pub fn list_actors(&self) -> Result<Vec<ActorInfo>, RuntimeError>;
     pub fn inspect_actor(&self, id: ActorId) -> Result<Option<ActorInfo>, RuntimeError>;
     pub fn compute(&self) -> &ComputeScheduler;
@@ -421,9 +439,34 @@ impl Runtime {
     pub fn schedule_interval<M: Clone + Send + Sync + 'static>(&self, interval: Duration, target: ActorId, message: M) -> TimerId;
     pub fn cancel_timer(&self, timer_id: TimerId);
     pub fn stats(&self) -> RuntimeStats;
+    pub fn sender(&self) -> RuntimeSender;
     pub fn shutdown(&mut self) -> Result<(), RuntimeError>;
 }
 ```
+
+### RuntimeSender
+
+A clonable handle for messaging actors from external threads. It shares the
+runtime's sender map (`Arc`) and keeps its own request counter seeded from
+the runtime's current count, so request IDs from a sender are not coordinated
+with `Runtime::request` IDs.
+
+```rust
+pub struct RuntimeSender {
+    pub(crate) senders: Arc<RwLock<HashMap<ActorId, Sender<MessageEnvelope>>>>,
+    pub(crate) request_counter: Arc<AtomicU64>,
+}
+
+impl RuntimeSender {
+    pub fn send<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<(), RuntimeError>;
+    pub fn request<M: Send + 'static>(&self, target: ActorId, message: M) -> Result<RequestHandle, RuntimeError>;
+}
+```
+
+`RuntimeSender` implements `Clone` (it holds `Arc`s internally).
+
+`RuntimeSender` cannot spawn actors: `spawn` needs exclusive access to
+`Runtime`. Spawn first, then hand the sender to connection threads.
 
 ### RequestHandle
 
@@ -480,6 +523,14 @@ impl Drop for Runtime {
 ## Supervisor
 
 Manages child actor lifecycle and restart policies.
+
+> **Implementation status (v1.3.3):** `Runtime::spawn_supervisor` builds a
+> `Supervisor`, registers an `ActorInfo` named `"supervisor"`, and returns
+> its `ActorId`. It does not spawn the declared child actors and does not
+> watch actor exits, so no restart is performed yet. `SupervisorActor`
+> (restart accounting and backoff) exists in `src/supervision/` but is not
+> wired into `Runtime` and is not exported. The types below describe the
+> intended contract.
 
 ### Restart Strategy
 

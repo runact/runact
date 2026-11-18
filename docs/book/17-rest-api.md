@@ -29,26 +29,31 @@ The `Router` matches HTTP requests to handlers based on method and path
 patterns:
 
 ```rust
+use runact_web::headers::Headers;
 use runact_web::router::Router;
 use runact_web::request::{Method, Request};
 use runact_web::response::{Response, StatusCode};
 
 let mut router = Router::new();
 
-router.route(Method::Get, "/api/agents", |req| {
+router.route(Method::Get, "/api/agents", |_req| {
     Response {
         status: StatusCode::OK,
+        reason: "OK".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: Headers::new(),
         body: b"[]".to_vec(),
-        ..Default::default()
     }
 });
 
 router.route(Method::Post, "/api/agents", |req| {
-    // Create an agent
+    // Create an agent (echoes the request body for illustration)
     Response {
         status: StatusCode::Created,
-        body: req.body.clone(),
-        ..Default::default()
+        reason: "Created".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: Headers::new(),
+        body: req.body,
     }
 });
 
@@ -56,8 +61,10 @@ router.route(Method::Get, "/api/agents/:id", |req| {
     let id = req.param("id").unwrap_or("0");
     Response {
         status: StatusCode::OK,
-        body: format!(r#"{{"id":"{id}"}}""#).into_bytes(),
-        ..Default::default()
+        reason: "OK".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: Headers::new(),
+        body: format!(r#"{{"id":"{id}"}}"#).into_bytes(),
     }
 });
 ```

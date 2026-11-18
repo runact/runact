@@ -10,8 +10,9 @@ This document outlines the development phases for Runact. Runact is the runtime;
 
 | Component | Status | Tests |
 |-----------|--------|-------|
-| **Runact** (runtime) | v1.3.2 | 110 tests across lib unit, actor_task_integration, async_executor, async_timers, basic, cancellation, compute, observability, process_runtime, reactor, resource, scheduler, stress, tcp_api, timer (119 with `hot_code_loading`) |
+| **Runact** (runtime) | v1.3.3 | 110 tests across lib unit, actor_task_integration, async_executor, async_timers, basic, cancellation, compute, observability, process_runtime, reactor, resource, scheduler, stress, tcp_api, timer (119 with `hot_code_loading`) |
 | **runact-web** (HTTP) | v0.3.0 | 89 tests: HTTP request, response, headers, router, middleware/extractors; WebSocket frames, async I/O, server, chat, runact bridge, fragmentation, agent server/API |
+| **Supervision** | 🟡 Partial | policy types + internal restart accounting; runtime child spawning/exit wiring pending |
 | **Phase 9** (Runtime + Networking) | ✅ Complete | cancellation, timers, actor-async integration, process runtime, TCP reactor, TCP API, stress tests |
 | **Phase 10** (HTTP) | ✅ Complete | HTTP/1.1 parsing, request/response types, headers |
 | **Phase 12** (WebSocket) | ✅ Complete | Upgrade, frames, connection lifecycle, async I/O, heartbeats, runact TCP bridge, examples |
@@ -58,13 +59,15 @@ Full development plan: [Development Plan](development-plan.md)
 
 ---
 
-## Phase 2 — Reliability ✅
+## Phase 2 — Reliability 🟡
 
 ### Deliverables
 
 - ✅ `src/supervision/` — Supervisor, ChildSpec, RestartStrategy
-- ✅ One-for-one restart strategy with exponential backoff
+- ✅ One-for-one restart accounting with exponential backoff (`SupervisorActor`, internal)
 - ✅ Restart limits (`max_restarts`, `within` window)
+- ⬜ Runtime wiring: supervised child spawning and exit notification
+- ⬜ Restart policy enforcement (`Permanent`/`Transient`/`Temporary`)
 - ✅ Crash isolation for compute tasks
 
 ---
@@ -128,7 +131,7 @@ Implemented in the order defined by async-runtime.md §20:
 - ✅ Phase 3 — Async task scheduler integration
 - ✅ Phase 4 — Cancellation (`CancellationToken`, task cancellation)
 - ✅ Phase 5 — Timers (`sleep()`, `timeout()`)
-- ✅ Phase 6 — Actor ↔ async integration (`ctx.spawn(async { ... })`, result delivered as a message)
+- 🟡 Phase 6 — Actor ↔ async integration: tasks are spawned with `Runtime::spawn_task` from outside the actor; `ActorContext` has no `spawn`, so the actor receives results as ordinary messages (no direct `ctx.spawn` yet)
 - ✅ Phase 7 — Task groups (structured concurrency)
 - ✅ Phase 8 — Compute pool separation (CPU-heavy work off the async/actor workers)
 - Phase 9 — Optional runtime adapters (e.g. Tokio) only when a concrete library requires one (not implemented; no library requires it)
@@ -276,8 +279,8 @@ This phase extends Runact into a small, Rust-native concurrency runtime for Pape
 - Parent → child cancellation propagation
 
 **Phase 9b — Timers** ✅
-- `runtime.sleep(duration)` — associated function
-- `runtime.timeout(duration, future)` — associated function
+- `Runtime::sleep(duration)` — associated function
+- `Runtime::timeout(duration, future)` — associated function
 - Crossbeam channel-based implementation
 
 **Phase 9c — Actor ↔ Async Integration** ✅
@@ -290,9 +293,14 @@ This phase extends Runact into a small, Rust-native concurrency runtime for Pape
 - Prevent orphaned processes on agent cancellation
 
 **Phase 9e — TCP Reactor** ✅
-- `src/net/` — native async TCP with OS readiness integration
+- `src/net/` — native TCP with an `epoll` reactor
 - Linux `epoll` first, abstraction for future platforms
 - `TcpListener`, `TcpStream`, read/write/connect/accept
+
+> **Implementation status (v1.3.3):** the reactor exists and sockets are
+> registered with it, but stream I/O polls the socket (`read`/`read_exact`)
+> rather than waiting on reactor readiness; `Reactor::wait` is not yet wired
+> into `TcpStream`.
 
 **Phase 9f — Stress Testing** ✅
 - 500 concurrent TCP connections
@@ -361,7 +369,7 @@ Now ─────── v0.5 ──── v0.6 ──── v0.7 ──── 
 - Work stealing across cores (scheduler tests)
 - No starvation (reduction counting)
 - Memory per actor < 1KB (RSS tracking benchmarked)
-- Supervisor restart reliability: 100% (supervisor tests)
+- Supervisor restart accounting: verified by `supervisor_actor.rs` unit tests (runtime-level restart wiring pending)
 - Crash isolation: verified (compute tests)
 
 ---

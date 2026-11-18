@@ -2,11 +2,11 @@
 
 ## Overview
 
-The Runact protocol defines how messages are structured and transmitted between actors. In v1.0.0, the protocol is simple: messages are sent through `crossbeam-channel` bounded queues with ownership transfer. There is no separate wire format or serialization for local actor-to-actor communication.
+The Runact protocol defines how messages are structured and transmitted between actors. As of v1.3.3, the protocol is simple: messages are sent through `crossbeam-channel` bounded queues with ownership transfer. There is no separate wire format or serialization for local actor-to-actor communication.
 
-This document describes the current v1.0.0 protocol and future directions.
+This document describes the current protocol and future directions.
 
-## Current Protocol (v1.0.0)
+## Current Protocol (v1.3.3)
 
 ### MessageEnvelope
 
@@ -42,13 +42,14 @@ pub(crate) enum MessageEnvelope {
 
 ```rust
 // Fire-and-forget
-runtime.send(actor_id, message: M)?;
+runtime.send(actor_id, message)?;
 
-// Actor-to-actor
-ctx.send_to(target, message: M)?;
+// Actor-to-actor (inside handle)
+ctx.send_to(target, message)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 
 // Request/reply
-runtime.request(actor_id, message: M)?;
+runtime.request(actor_id, message)?;
 ```
 
 The `send` method uses `try_send` (non-blocking) and returns `RuntimeError::MailboxFull` if the bounded mailbox is full.
@@ -88,12 +89,15 @@ pub struct RequestHandle {
 // External thread
 let handle = runtime.request(actor_id, GetValue)?;
 let reply = handle.recv_timeout(Duration::from_secs(5))?;
-let value = *reply.downcast::<i64>()?;
+let value = *reply
+    .downcast::<i64>()
+    .map_err(|_| RuntimeError::RuntimeStopped)?;
 
 // Inside actor handler
 fn handle(&mut self, msg: MyMessage, ctx: &mut ActorContext) -> Result<(), ActorError> {
     if ctx.is_request() {
-        ctx.reply(self.value)?;
+        ctx.reply(self.value)
+            .map_err(|e| ActorError::Handler(e.to_string()))?;
     }
     Ok(())
 }
@@ -164,7 +168,7 @@ Planned for extension processes and distributed runtime:
 - Protocol versioning
 - Custom codecs for extensions
 
-These are future considerations. The v1.0.0 protocol is intentionally simple.
+These are future considerations. The current v1.3.3 protocol is intentionally simple.
 
 ---
 

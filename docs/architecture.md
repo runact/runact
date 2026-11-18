@@ -399,6 +399,12 @@ pub struct Scheduler {
 
 Runact uses work stealing to balance load across workers.
 
+> **Implementation status (v1.3.3):** the `Scheduler` steals *tasks*, but
+> each spawned actor is one long-lived task running a mailbox loop. An actor
+> therefore holds its worker for its lifetime (idle actors poll with a 10ms
+> timeout), and only as many actors as workers can make progress at once.
+> Per-actor multiplexing/parking is a design goal, not current behavior.
+
 ```text
 Worker A
 Queue:
@@ -502,7 +508,7 @@ Examples:
 * timers
 * LSP communication
 
-Async work waits on external events instead of consuming CPU. It is executed as standard Rust `Future`s on the Runact executor (planned — see [Async Runtime](async-runtime.md)). A pending async task must not occupy a worker; when its waker fires, the task is re-enqueued and polled again.
+Async work waits on external events instead of consuming CPU. It is executed as standard Rust `Future`s on the Runact executor (implemented in v1.1.0 — see [Async Runtime](async-runtime.md)). A pending async task must not occupy a worker; when its waker fires, the task is re-enqueued and polled again.
 
 ---
 
@@ -525,7 +531,8 @@ Compute Pool
 The actor can submit a `ComputeJob` and receive the result later:
 
 ```rust
-ctx.spawn_compute(move || expensive_calculation())?;
+ctx.spawn_compute(move || expensive_calculation())
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 Example flow:
@@ -766,6 +773,12 @@ Supervisor
 
 If `FileIndexer` crashes, the supervisor may restart only `FileIndexer`.
 
+> **Implementation status (v1.3.3):** restart accounting and backoff are
+> implemented in the internal `SupervisorActor`, but `Runtime` does not yet
+> spawn children or report actor exits to it. `Runtime::spawn_supervisor`
+> currently registers the supervisor and returns its `ActorId`; automatic
+> restarts are not wired. See [Supervision](supervision.md).
+
 ---
 
 ## 23. Supervision Tree
@@ -851,15 +864,17 @@ Timers integrate with the actor system. One-shot and periodic timers are support
 Timers can be scheduled from actors:
 
 ```rust
-ctx.schedule_timer(Duration::from_secs(1), WakeUpMessage)?;
-ctx.schedule_interval(Duration::from_secs(5), Tick)?;
+ctx.schedule_timer(Duration::from_secs(1), WakeUpMessage)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
+ctx.schedule_interval(Duration::from_secs(5), Tick)
+    .map_err(|e| ActorError::Handler(e.to_string()))?;
 ```
 
 Or from the runtime:
 
 ```rust
-runtime.schedule_timer(Duration::from_secs(1), actor_id, message)?;
-runtime.schedule_interval(Duration::from_secs(5), actor_id, message)?;
+runtime.schedule_timer(Duration::from_secs(1), actor_id, message);
+runtime.schedule_interval(Duration::from_secs(5), actor_id, message);
 ```
 
 Timers can be cancelled by ID:
@@ -996,12 +1011,35 @@ runact/
 │   │   ├── capability.rs  # Capability
 │   │   ├── handle.rs      # ResourceHandle
 │   │   └── registry.rs    # ResourceRegistry
+│   ├── task/              # Native async executor (v1.1.0)
+│   │   ├── mod.rs
+│   │   ├── cancellation.rs  # CancellationToken, TaskGroup, CancellableFuture
+│   │   ├── cell.rs          # TaskCell (run queue entry)
+│   │   ├── error.rs         # TaskError, TaskResult
+│   │   ├── executor.rs      # Executor + worker pool
+│   │   ├── handle.rs        # TaskHandle
+│   │   └── id.rs            # TaskId
+│   ├── net/               # TCP reactor (v1.2.0)
+│   │   ├── mod.rs
+│   │   ├── reactor.rs       # Reactor, Interest, Readiness, Event (epoll)
+│   │   ├── tcp_api.rs       # TcpListener, TcpStream
+│   │   └── tcp.rs           # NetConnection actor + reader/writer threads
+│   ├── process/           # Process runtime (v1.2.0)
+│   │   └── mod.rs           # ProcessSpawnOptions, ProcessHandle, ProcessOutput
+│   ├── hotswap/           # Hot code loading (v1.3.0, feature-gated)
+│   │   ├── codemgr.rs       # CodeManager, CodePath
+│   │   ├── dynamic_supervisor.rs
+│   │   ├── factory.rs       # ActorFactory
+│   │   ├── loader.rs        # DynamicLibrary, LibraryLoader
+│   │   ├── migration.rs     # MigrationRegistry, StateMigration
+│   │   ├── spawn_listener.rs
+│   │   └── types.rs         # ActorVTable, WorkItem, WorkerMessage, ...
 │   └── runtime.rs            # Runtime, RuntimeConfig, RuntimeStats, RequestHandle
 ```
 
-### Async Runtime Layers (planned)
+### Async Runtime Layers
 
-The async runtime adds the following conceptual modules (see [Async Runtime](async-runtime.md)):
+The async runtime is implemented; the conceptual modules are (see [Async Runtime](async-runtime.md)):
 
 ```text
 runact/
@@ -1011,9 +1049,9 @@ runact/
 ├── actor
 ├── mailbox
 ├── task        # Task<T>, TaskHandle<T>, task lifecycle
-├── executor    # Future executor integrated with the scheduler
+├── executor    # Future executor on a dedicated worker pool
 ├── waker       # Runact-specific Waker with atomic state machine
-├── timer       # sleep()/timeout() via timer wheel or priority queue + driver
+├── timer       # sleep()/timeout() via a timer thread + channel waker
 ├── cancellation # CancellationToken
 ├── supervision
 ├── compute
@@ -1131,10 +1169,9 @@ Test categories:
 
 ### Supervision tests
 
-* panic (`supervisor_actor.rs` tests)
-* restart (backoff, max restarts)
-* stop
-* escalation (beyond max restarts)
+* child tracking and restart accounting (`supervisor_actor.rs` unit tests)
+* max-restart escalation (`supervisor_actor.rs` unit tests)
+* runtime-level child spawning and exit notification — **not yet implemented**
 
 ### Compute tests
 

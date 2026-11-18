@@ -91,7 +91,8 @@ impl Actor for Worker {
         match msg {
             Query::WhoAreYou => {
                 assert!(ctx.is_request());
-                ctx.reply("I am Worker 42".to_string())?;
+                ctx.reply("I am Worker 42".to_string())
+                    .map_err(|e| ActorError::Handler(e.to_string()))?;
             }
             _ => {}
         }
@@ -149,7 +150,8 @@ impl Actor for Client {
     fn handle(&mut self, _msg: Ping, ctx: &mut ActorContext)
         -> Result<(), ActorError> {
         let (tx, rx) = mpsc::channel();
-        ctx.send_to(self.service, Pong(tx))?;
+        ctx.send_to(self.service, Pong(tx))
+            .map_err(|e| ActorError::Handler(e.to_string()))?;
 
         // Wait for reply (non-ideal: blocks actor handler)
         rx.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -181,7 +183,8 @@ impl Actor for RoomManager {
                 self.members.insert(user_actor, user_id);
                 // Broadcast to all existing members
                 for &member in self.members.keys() {
-                    ctx.send_to(member, RoomMsg::UserJoined(user_id))?;
+                    ctx.send_to(member, RoomMsg::UserJoined(user_id))
+                        .map_err(|e| ActorError::Handler(e.to_string()))?;
                 }
             }
             RoomMsg::Leave { user_actor } => {

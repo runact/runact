@@ -33,6 +33,10 @@ loop {
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
         let n = client.read(&mut buf).unwrap();
+        // `read` maps WouldBlock to Ok(0); retry if no bytes are available yet.
+        if n == 0 {
+            return;
+        }
         let request = Request::parse(&buf[..n]).unwrap();
         println!("{} {}", request.method, request.path);
     });
@@ -71,27 +75,34 @@ client.flush()?;
 ## 13.3 The Router
 
 ```rust
-use runact_web::router::Router;
+use runact_web::headers::Headers;
 use runact_web::request::Method;
+use runact_web::response::{Response, StatusCode};
+use runact_web::router::Router;
 
 let mut router = Router::new();
 
 // Static path
-router.route(Method::Get, "/", |req| {
+router.route(Method::Get, "/", |_req| {
     Response {
         status: StatusCode::OK,
+        reason: "OK".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: Headers::new(),
         body: b"Welcome!".to_vec(),
-        ..Default::default()
     }
 });
 
 // Path with parameter
 router.route(Method::Get, "/users/:id", |req| {
     let id = req.param("id").unwrap_or("0");
+    let body = format!(r#"{{"id": "{id}"}}"#).into_bytes();
     Response {
         status: StatusCode::OK,
-        body: format!(r#"{{"id": "{}"}}"#.to_string().into_bytes(),
-        ..Default::default()
+        reason: "OK".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: Headers::new(),
+        body,
     }
 });
 
@@ -99,8 +110,10 @@ router.route(Method::Get, "/users/:id", |req| {
 router.route(Method::Post, "/users", |req| {
     Response {
         status: StatusCode::Created,
-        body: req.body.clone(), // echo back
-        ..Default::default()
+        reason: "Created".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: Headers::new(),
+        body: req.body,
     }
 });
 
@@ -108,11 +121,18 @@ router.route(Method::Post, "/users", |req| {
 router.not_found(|_req| {
     Response {
         status: StatusCode::NotFound,
+        reason: "Not Found".to_string(),
+        version: "HTTP/1.1".to_string(),
+        headers: Headers::new(),
         body: b"Not Found".to_vec(),
-        ..Default::default()
     }
 });
 ```
+
+> **Note:** `Response` has no `Default` impl. Construct all five fields, or
+> return a `&str`, `StatusCode`, or `(StatusCode, Vec<u8>)` from a handler
+> via the `IntoResponse` trait (the router's `Handler` bound still expects a
+> `Response`, so call `.into_response()` explicitly).
 
 ### Router::handle
 

@@ -4,6 +4,12 @@
 
 Runact provides BEAM-inspired supervision. Supervisors manage actor lifecycle and handle failures. When a child crashes, the supervisor decides whether to restart it based on its strategy.
 
+> **Implementation status (v1.3.3):** the supervision *policy* pieces
+> (`RestartStrategy`, `ChildSpec`, `RestartPolicy`, restart accounting and
+> backoff) exist, but `Runtime::spawn_supervisor` does not yet spawn the
+> declared children or receive exit notifications. The restart flow
+> described below is the intended contract.
+
 ## Core Principle
 
 > **Let it crash — but supervise the crash.**
@@ -181,7 +187,8 @@ tracing::error!(
 
 ## Supervisor Message Protocol
 
-The `SupervisorActor` implements the `Actor` trait and accepts:
+The internal `SupervisorActor` (not exported from the crate) implements the
+`Actor` trait and accepts:
 
 ```rust
 pub enum SupervisorMessage {
@@ -191,13 +198,9 @@ pub enum SupervisorMessage {
 }
 ```
 
-You can query supervisor status by sending a `GetStatus` request:
-
-```rust
-let handle = runtime.request(supervisor_id, SupervisorMessage::GetStatus)?;
-let reply = handle.recv_timeout(Duration::from_secs(1))?;
-let statuses = reply.downcast::<Vec<ChildStatus>>()?;
-```
+> **Implementation status (v1.3.3):** `SupervisorMessage` and `ChildStatus`
+> are private. They are exercised by the crate's unit tests; an application
+> cannot send `GetStatus` through `Runtime::request` today.
 
 ### ChildStatus
 

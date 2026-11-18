@@ -38,4 +38,4 @@ Transaction
 
 ## Status
 
-This feature is not yet implemented in v1.0.0. The runtime provides the messaging and compute primitives that a transaction system would build upon, but the transaction API itself is planned for a future version.
+This feature is not yet implemented (as of v1.3.3). The runtime provides the messaging and compute primitives that a transaction system would build upon, but the transaction API itself is planned for a future version.

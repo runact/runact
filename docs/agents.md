@@ -83,4 +83,4 @@ Agent capabilities are managed through `Capability<H: ResourceHandle>` — the s
 
 ## Status
 
-This feature is not yet implemented in v1.0.0. The runtime provides the foundational primitives (actors, supervisors, compute, timers, capabilities) that an agent system would build upon, but the agent-specific abstractions are planned for a future version.
+This feature is not yet implemented (as of v1.3.3). The runtime provides the foundational primitives (actors, compute, timers, capabilities) that an agent system would build upon, but the agent-specific abstractions are planned for a future version.

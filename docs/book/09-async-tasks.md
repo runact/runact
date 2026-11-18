@@ -56,7 +56,7 @@ pub struct TaskHandle<T> {
 ### recv — Block Until Done
 
 ```rust
-let result = handle.recv()?;  // blocks until task completes
+let result = handle.recv().unwrap();  // blocks until task completes
 ```
 
 ### try_recv — Check Without Blocking
@@ -110,71 +110,83 @@ let handle = runtime.spawn_task(async {
 
 ## 9.4 Bridging Actors and Async Tasks
 
-An actor can spawn an async task and receive the result via a timer-driven
-polling pattern:
+> **Implementation status (v1.3.3):** `ActorContext` has no `spawn` method —
+> actors cannot spawn async tasks directly. Spawn the task from outside the
+> runtime (or from a thread holding a `RuntimeSender` for messaging) and send
+> the result back as a normal message.
+
+The supported pattern is: spawn from the owning thread, then deliver the
+outcome to the actor with `Runtime::send`.
 
 ```rust
-use runact::{Actor, ActorContext, ActorError};
+use runact::{Actor, ActorContext, ActorError, ActorId, Runtime, RuntimeSender};
 use std::time::Duration;
 
-struct HttpWorker;
+// A message the actor understands for async completions.
+enum HttpWork {
+    Done(String),
+    Failed(String),
+}
 
+struct HttpWorker;
 impl Actor for HttpWorker {
     type Message = HttpWork;
-
-    fn handle(&mut self, msg: HttpWork, ctx: &mut ActorContext)
+    fn handle(&mut self, msg: HttpWork, _ctx: &mut ActorContext)
         -> Result<(), ActorError>
     {
         match msg {
-            HttpWork::Fetch(url) => {
-                // Spawn async task on the executor
-                let handle = ctx.spawn(
-                    async move { fetch_url(&url).await }
-                ).map_err(|e| ActorError::Handler(e.to_string()))?;
-
-                // Poll via a timer
-                let fetch_id = url;
-                ctx.schedule_timer(Duration::from_millis(100), HttpWork::PollHandle { handle, fetch_id })?;
-            }
-            HttpWork::PollHandle { handle, fetch_id } => {
-                match handle.try_recv() {
-                    Some(Ok(result)) => { /* process result */ }
-                    Some(Err(e)) => { /* handle error */ }
-                    None => {
-                        // Still running — reschedule poll
-                        ctx.schedule_timer(Duration::from_millis(100), msg)?;
-                    }
-                }
-            }
+            HttpWork::Done(body) => println!("fetched {} bytes", body.len()),
+            HttpWork::Failed(e) => eprintln!("fetch failed: {e}"),
         }
         Ok(())
     }
 }
+
+// Outside the actor: spawn the task and post the result back.
+fn fetch_into(runtime: &Runtime, sender: RuntimeSender, id: ActorId, url: String) {
+    runtime
+        .spawn_task(async move {
+            let result = fetch_url(&url).await;
+            match result {
+                Ok(body) => sender.send(id, HttpWork::Done(body)).ok(),
+                Err(e) => sender.send(id, HttpWork::Failed(e.to_string())).ok(),
+            };
+        })
+        .unwrap();
+}
 ```
 
-> **Note:** `ctx.spawn` does not exist in the current API — async tasks
-> are spawned via `runtime.spawn_task` from outside the actor, or the
-> actor stores a `RuntimeSender` (see Chapter 16) to spawn tasks.
+Timers can still be used to poll a task that was started elsewhere, but the
+common pattern is the completion message shown above.
 
 ## 9.5 Task Groups and Cancellation
 
 `TaskGroup` provides **structured concurrency** — a group of related
-tasks can be cancelled together:
+tasks shares one cancellation token:
 
 ```rust
-use runact::{CancellationToken, TaskGroup};
+use runact::{CancellationToken, Runtime, TaskGroup};
 
-// Each child gets a token derived from the parent
+let runtime = Runtime::new().unwrap();
+let group = TaskGroup::new();
+
+// parent → child token propagation
 let parent_token = CancellationToken::new();
 let child_token = parent_token.child_token();
 
-let group = TaskGroup::new(parent_token);
-group.spawn(async move {
+// Spawning through the group wraps the future with the group's token.
+let handle = group.spawn(&runtime, async move {
     // Task checks child_token.is_cancelled() periodically
     // When parent_token.cancel() is called, child_token becomes cancelled
 });
+
+parent_token.cancel();
+group.cancel(); // cancels every task spawned through the group
 ```
 
 Cancellation is **cooperative** — tasks must check their token
 `is_cancelled()` and exit gracefully. Runact does NOT forcibly kill
 threads or futures.
+
+> **Note (v1.3.3):** dropping a `TaskGroup` does not cancel its children.
+> Call `group.cancel()` (or cancel the parent token) explicitly.

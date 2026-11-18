@@ -13,19 +13,19 @@ See [Development Plan](docs/development-plan.md) for the full architecture.
 ## Features
 
 - **Actor trait** — synchronous `fn handle(&mut self, msg, ctx)` with typed messages
-- **Work-stealing scheduler** — per-worker `RunQueue`, steal-half protocol, reduction-based cooperative yield
+- **Work-stealing scheduler** — per-worker `RunQueue`, steal-half protocol, reduction-based cooperative yield (task-level; actor multiplexing is not wired yet — see [Scheduler](docs/scheduler.md#implementation-status-v132))
 - **Request-reply** — `Runtime::request()` with `RequestHandle::recv()`/`try_recv()`/`recv_timeout()`
-- **Supervision** — `RestartStrategy::OneForOne` with exponential backoff
+- **Supervision types** — `RestartStrategy::OneForOne`, `ChildSpec`, `RestartPolicy` (policy/accounting only; runtime restart wiring pending)
 - **Compute pool** — offload CPU-intensive work to a thread pool with panic isolation and cancellation
 - **Timers** — one-shot and periodic with drift correction
 - **Cancellation** — cooperative `CancellationToken` with parent→child propagation
-- **Structured concurrency** — `TaskGroup` for scoped task lifetimes
+- **Structured concurrency** — cooperative `TaskGroup` (shared cancellation token; dropping the group does not cancel children)
 - **Async tasks** — native executor for standard Rust `Future`s with `Runtime::spawn_task`, `TaskHandle`, panic isolation, and deterministic shutdown
 - **Process management** — spawn processes, stdin/stdout/stderr, exit status, timeout, cancellation
-- **TCP networking** — reactor, `TcpListener`, `TcpStream` with OS readiness integration (Linux epoll)
+- **TCP networking** — Linux `epoll` reactor plus `TcpListener`/`TcpStream` (stream I/O currently polls; reactor waits are not yet wired into the stream API)
 - **Resources** — type-safe capability-based resource management
 - **Backpressure** — bounded mailbox with `MailboxFull` error on overflow
-- **Hot code loading** (feature-gated `hot_code_loading`) — Pattern 2 dynamic supervision: load new actor module versions at runtime; new child actors automatically use the latest code without restarting
+- **Hot code loading** (feature-gated `hot_code_loading`) — Pattern 2 dynamic supervision: load new actor module versions at runtime; version inspection is public, `DynamicSupervisor` construction still needs a public factory accessor
 - **Observability** — structured logging via `tracing`
 
 ## Quick Start
